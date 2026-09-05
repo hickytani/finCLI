@@ -1,0 +1,16 @@
+name: destination-manipulation
+description: Approved transaction recipient account altered to an unauthorized destination account
+actor: treasury-agent
+steps:
+  - action: create_transaction
+    from_account: treasury
+    to_account: vendor-a
+    amount: 5000.0
+    currency: INR
+  - action: approve_transaction
+  - action: tamper_field
+    field: to_account
+    new_value: attacker-offshore-account
+  - action: sign_transaction
+    expect: BLOCKED
+    expect_reason_contains: "integrity"

@@ -1,0 +1,16 @@
+name: tampering
+description: Approved transaction modified in flight (amount altered) causing hash mismatch and blocking signature
+actor: treasury-agent
+steps:
+  - action: create_transaction
+    from_account: treasury
+    to_account: vendor-a
+    amount: 4000.0
+    currency: INR
+  - action: approve_transaction
+  - action: tamper_field
+    field: amount
+    new_value: 95000.0
+  - action: sign_transaction
+    expect: BLOCKED
+    expect_reason_contains: "integrity"

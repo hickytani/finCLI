@@ -1,0 +1,13 @@
+name: replay
+description: Attempt to re-execute or re-sign a transaction using a previously registered nonce
+actor: treasury-agent
+steps:
+  - action: create_transaction
+    from_account: treasury
+    to_account: vendor-a
+    amount: 5000.0
+    currency: INR
+  - action: save_nonce
+  - action: attempt_replay
+    expect: BLOCKED
+    expect_reason_contains: "REPLAY"

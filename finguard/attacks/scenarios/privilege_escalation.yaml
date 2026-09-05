@@ -1,0 +1,11 @@
+name: privilege-escalation
+description: Low-privilege agent attempts transaction exceeding maximum authority limit
+actor: treasury-agent
+steps:
+  - action: create_transaction
+    from_account: treasury
+    to_account: vendor-a
+    amount: 100000.0
+    currency: INR
+    expect: BLOCKED
+    expect_reason_contains: "authority limit"

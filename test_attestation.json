@@ -1,0 +1,16 @@
+{
+  "attestation_type": "FIN//GUARD Audit Ledger Verification",
+  "timestamp": "2026-09-04T16:35:28.403209+00:00",
+  "chain_root_hash": "dea0195608b1bca9ff459af53ba5a1260f43766379a5675dd90c9ae10f57c9fa",
+  "entry_count": 8,
+  "invariants_checked": [
+    "HASH_CHAIN_INTEGRITY",
+    "REPLAY_PROTECTION",
+    "SIGNATURE_VALIDITY",
+    "AGENT_APPROVAL_FLOOR"
+  ],
+  "integrity_result": "FAIL",
+  "verification_notes": "Entry content hash mismatch at entry #1. Stored f9fe88f8..., computed 5ef0e25a...",
+  "attestor_pubkey": "ae54d9a686b934155e393f7d35d18f36ed525e3ac8c90cdbf877b7ac1ae28088",
+  "signature": "273f3ed1940769130554c237fa2bb041e41078aab585abc84ebc0fc610ac09a8254a2d41b74f2efe6b66938f42e38e0421dd75ab8b3419f79d157048e6e08a0f"
+}
