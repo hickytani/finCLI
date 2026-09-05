@@ -60,6 +60,8 @@ attack_app = typer.Typer(help="Adversarial attack laboratory.")
 attest_app = typer.Typer(help="Signed attestation reports.")
 audit_app = typer.Typer(help="Tamper-evident audit ledger.")
 incident_app = typer.Typer(help="Security incident management.")
+decision_app = typer.Typer(help="Central authorization decision receipts.")
+agent_app = typer.Typer(help="Untrusted treasury agent orchestration.")
 
 app.add_typer(key_app, name="key")
 app.add_typer(identity_app, name="identity")
@@ -72,6 +74,39 @@ app.add_typer(attack_app, name="attack")
 app.add_typer(attest_app, name="attest")
 app.add_typer(audit_app, name="audit")
 app.add_typer(incident_app, name="incident")
+app.add_typer(decision_app, name="decision")
+app.add_typer(agent_app, name="agent")
+
+
+@decision_app.command("inspect")
+def decision_inspect(transaction_id: str = typer.Argument(help="Transaction ID.")):
+    """Inspect the latest canonical decision receipt for a transaction."""
+    _ensure_init()
+    from finguard.storage.repositories import ReceiptRepository
+    import json
+    session = get_session()
+    try:
+        receipt = ReceiptRepository(session).get_by_transaction(transaction_id)
+        if not receipt:
+            raise typer.Exit(code=1)
+        console.print(receipt.reason)
+    finally:
+        session.close()
+
+
+@agent_app.command("run")
+def agent_run(task: str = typer.Argument(help="Natural-language payment task.")):
+    """Run the bounded treasury agent (never grants signing authority)."""
+    _ensure_init()
+    from finguard.agent import TreasuryAgent
+    import json
+    console.print(json.dumps(TreasuryAgent().run(task), indent=2))
+
+
+@agent_app.command("status")
+def agent_status():
+    """Show the configured agent model state."""
+    console.print("Treasury agent: bounded local fallback; model=not-configured")
 
 
 def _ensure_init() -> None:

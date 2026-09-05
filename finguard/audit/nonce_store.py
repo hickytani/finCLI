@@ -8,6 +8,7 @@ a REPLAY_ATTEMPT, persisting across process restarts.
 
 from typing import Optional
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError as SqlIntegrityError
 from finguard.storage.database import get_session
 from finguard.storage.repositories import NonceRepository
 
@@ -33,13 +34,17 @@ class NonceStore:
             if is_local:
                 session.close()
 
-    def record(self, nonce: str, transaction_id: str) -> None:
-        """Record a nonce as used by a transaction ID."""
+    def record(self, nonce: str, transaction_id: str) -> bool:
+        """Atomically record a nonce. Returns False if another caller won the race."""
         session, is_local = self._get_session()
         try:
             repo = NonceRepository(session)
-            if not repo.exists(nonce):
+            try:
                 repo.register(nonce, transaction_id)
+                return True
+            except SqlIntegrityError:
+                session.rollback()
+                return False
         finally:
             if is_local:
                 session.close()

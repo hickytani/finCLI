@@ -8,6 +8,7 @@ SECURITY PROPERTY:
 """
 
 from typing import Optional
+import os
 from pydantic import BaseModel, Field
 
 from finguard.core.enums import DecisionType, ActorType
@@ -39,6 +40,11 @@ class PolicyEngine:
 
     def __init__(self, policy: Optional[PolicyConfig] = None):
         if policy is None:
+            policy_path = os.environ.get("FINGUARD_POLICY_PATH")
+            if policy_path:
+                from finguard.policy.parser import load_policy_from_yaml
+                self.policy = load_policy_from_yaml(policy_path)
+                return
             # Default fallback policy
             self.policy = PolicyConfig(
                 policy_id="default-policy-v1",

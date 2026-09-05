@@ -34,6 +34,29 @@ def do_tx_create(
     metadata_json: str | None = None
 ):
     """Create a new financial transaction request as an operator."""
+    # Phase 2: all creation paths enter through the central decision engine.
+    from finguard.decision import DecisionEngine
+    actor_id = actor_id or "operator-1"
+    registry = IdentityRegistry()
+    actor = registry.get_actor(actor_id)
+    if not actor:
+        raise typer.BadParameter(f"Unknown actor '{actor_id}'")
+    tx = Transaction(
+        actor_id=actor_id, from_account=from_account, to_account=to_account,
+        amount=amount, currency=Currency(currency.upper()),
+        metadata=json.loads(metadata_json) if metadata_json else None,
+        initiating_actor_type=actor.actor_type.value,
+    )
+    result = DecisionEngine(registry=registry).decide(tx)
+    console.print(Panel(
+        f"Transaction ID: [bold cyan]{tx.transaction_id}[/bold cyan]\n"
+        f"Decision: [bold]{result.decision.value.upper()}[/bold]\n"
+        f"Receipt: [dim]{result.receipt.receipt_id}[/dim]\n"
+        f"Reason: [dim]{'; '.join(result.receipt.reasons)}[/dim]",
+        title="Transaction Processed", border_style="cyan",
+    ))
+    return result
+
     actor_id = actor_id or "operator-1"
     registry = IdentityRegistry()
     actor = registry.get_actor(actor_id)
@@ -211,6 +234,25 @@ def do_tx_inspect(transaction_id: str, output_json: bool = False):
 
 def do_tx_sign(transaction_id: str, key_id: str | None = None):
     """Sign a transaction (verifying identity, authority, policy, risk, approvals, and integrity)."""
+    # The legacy signer below is deliberately unreachable: all application
+    # signing must use the final gate and its immediate revalidation.
+    from finguard.signing import SigningGate
+    if not key_id:
+        keys = Keystore().list_keys()
+        if not keys:
+            console.print("[bold red]Error:[/bold red] No keys found in keystore.")
+            raise typer.Exit(code=1)
+        key_id = keys[0]["key_id"]
+    password = Prompt.ask(f"Enter passphrase for key '{key_id}'", password=True)
+    try:
+        signature = SigningGate().sign(transaction_id, key_id, password)
+        console.print(f"[bold green]✓ Transaction '{transaction_id}' successfully signed by the final signing gate.[/bold green]")
+        console.print(f"Signature: [dim]{signature}[/dim]")
+        return signature
+    except Exception as e:
+        console.print(f"[bold red]SIGNING BLOCKED:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
     session = get_session()
     try:
         tx_repo = TransactionRepository(session)

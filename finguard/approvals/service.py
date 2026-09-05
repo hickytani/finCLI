@@ -9,6 +9,7 @@ SECURITY PROPERTY:
 
 import uuid
 import datetime
+import json
 from typing import Optional
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,9 @@ from finguard.core.errors import SecurityError, IntegrityError
 from finguard.core.transaction import Transaction
 from finguard.crypto.keystore import Keystore
 from finguard.crypto.signing import sign_canonical_bytes, verify_signature
+from finguard.crypto.hashing import sha256_hash
+from finguard.core.canonical import canonical_serialize
+from finguard.policy.engine import PolicyEngine
 from finguard.identity.registry import ActorConfig
 from finguard.storage.database import get_session
 from finguard.storage.models import ApprovalRecord, ApprovalRequestRecord, TransactionRecord, ActorRecord
@@ -48,6 +52,8 @@ class ApprovalService:
             if existing:
                 return existing
 
+            policy = PolicyEngine().policy
+            policy_hash = sha256_hash(canonical_serialize(policy.model_dump(mode="json")))
             req = ApprovalRequestRecord(
                 request_id=f"REQ-{uuid.uuid4().hex[:10].upper()}",
                 transaction_id=transaction.transaction_id,
@@ -56,6 +62,8 @@ class ApprovalService:
                 current_approvals=0,
                 state=ApprovalState.PENDING.value,
                 requester_id=requester_id,
+                policy_version=str(policy.version),
+                policy_hash=policy_hash,
                 created_at=datetime.datetime.now(datetime.timezone.utc)
             )
             repo.save_request(req)
@@ -92,6 +100,8 @@ class ApprovalService:
 
             if approver.actor_type not in (ActorType.APPROVER, ActorType.HUMAN_OPERATOR, ActorType.HUMAN):
                 raise SecurityError(f"Actor '{approver.actor_id}' of type '{approver.actor_type}' cannot approve transactions.")
+            if approver.actor_id == tx_rec.actor_id:
+                raise SecurityError("Requester cannot approve its own transaction.")
 
             # Ensure approver ActorRecord exists in DB for foreign key constraint
             actor_repo = ActorRepository(session)
@@ -102,13 +112,6 @@ class ApprovalService:
                     display_name=approver.display_name,
                     active=True
                 ))
-
-            # Load key and sign canonical hash of transaction
-            keystore = Keystore()
-            priv_key = keystore.load_private_key(key_id, password)
-
-            tx_hash_bytes = tx_rec.canonical_hash.encode("utf-8")
-            signature = sign_canonical_bytes(tx_hash_bytes, priv_key)
 
             appr_repo = ApprovalRepository(session)
             req = appr_repo.get_request(transaction_id)
@@ -130,16 +133,41 @@ class ApprovalService:
                     requester_id=tx_rec.actor_id
                 )
 
+            if req.transaction_hash != tx_rec.canonical_hash:
+                raise SecurityError("Approval request is stale due to transaction mutation.")
+            policy = PolicyEngine().policy
+            policy_hash = sha256_hash(canonical_serialize(policy.model_dump(mode="json")))
+            if req.policy_version != str(policy.version) or req.policy_hash != policy_hash:
+                raise SecurityError("Approval request is stale due to policy change.")
+
+            now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            expires_at = now + datetime.timedelta(minutes=30)
+            payload = {
+                "transaction_hash": tx_rec.canonical_hash, "request_id": req.request_id,
+                "approver_id": approver.actor_id, "approval_type": "human_approval",
+                "policy_version": req.policy_version, "policy_hash": req.policy_hash,
+                "timestamp": now.isoformat(), "expires_at": expires_at.isoformat(),
+            }
+            keystore = Keystore()
+            signature = sign_canonical_bytes(canonical_serialize(payload), keystore.load_private_key(key_id, password))
+
             approval_record = ApprovalRecord(
                 approval_id=f"APPR-{uuid.uuid4().hex[:10].upper()}",
                 transaction_id=transaction_id,
                 transaction_hash=tx_rec.canonical_hash,
+                request_id=req.request_id,
+                policy_version=req.policy_version,
+                policy_hash=req.policy_hash,
+                approval_type="human_approval",
+                expires_at=expires_at,
+                signing_key_id=key_id,
+                approval_payload_hash=sha256_hash(canonical_serialize(payload)),
                 approver_id=approver.actor_id,
                 approver_signature=signature,
                 state=ApprovalState.APPROVED.value,
                 nonce=uuid.uuid4().hex[:16],
-                created_at=datetime.datetime.now(datetime.timezone.utc),
-                decided_at=datetime.datetime.now(datetime.timezone.utc)
+                created_at=now,
+                decided_at=now
             )
             appr_repo.save_approval(approval_record)
 
@@ -171,17 +199,37 @@ class ApprovalService:
             if not req:
                 return False
 
-            if req.transaction_hash != transaction.transaction_hash():
+            policy = PolicyEngine().policy
+            policy_hash = sha256_hash(canonical_serialize(policy.model_dump(mode="json")))
+            if req.transaction_hash != transaction.transaction_hash() or req.policy_version != str(policy.version) or req.policy_hash != policy_hash:
                 return False
 
             approvals = appr_repo.get_approvals(transaction.transaction_id)
             if not approvals:
                 return False
 
+            valid = 0
+            now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             for appr in approvals:
-                if appr.transaction_hash != transaction.transaction_hash():
+                if (appr.transaction_hash != transaction.transaction_hash() or appr.request_id != req.request_id
+                        or appr.policy_version != req.policy_version or appr.policy_hash != req.policy_hash
+                        or not appr.expires_at or appr.expires_at < now or not appr.signing_key_id):
                     return False
-            return True
+                payload = {
+                    "transaction_hash": appr.transaction_hash, "request_id": appr.request_id,
+                    "approver_id": appr.approver_id, "approval_type": appr.approval_type,
+                    "policy_version": appr.policy_version, "policy_hash": appr.policy_hash,
+                    "timestamp": appr.created_at.isoformat(), "expires_at": appr.expires_at.isoformat(),
+                }
+                if sha256_hash(canonical_serialize(payload)) != appr.approval_payload_hash:
+                    return False
+                try:
+                    pub = Keystore().get_public_key(appr.signing_key_id)
+                    verify_signature(canonical_serialize(payload), appr.approver_signature, bytes.fromhex(pub))
+                except Exception:
+                    return False
+                valid += 1
+            return valid >= req.required_approvals
         finally:
             if is_local:
                 session.close()

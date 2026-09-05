@@ -8,7 +8,7 @@ The database is NOT encrypted at rest in the MVP. Production deployments
 should use encrypted storage or full-disk encryption.
 """
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase
 
 from finguard.core.config import get_config
@@ -63,7 +63,19 @@ def get_session() -> Session:
 def init_db() -> None:
     """Create all tables. Idempotent."""
     from finguard.storage import models as _  # noqa: F401 — ensure models are imported
-    Base.metadata.create_all(get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    expected = {
+        "approvals": {"request_id": "VARCHAR", "policy_version": "VARCHAR", "policy_hash": "VARCHAR", "approval_type": "VARCHAR", "expires_at": "DATETIME", "signing_key_id": "VARCHAR", "approval_payload_hash": "VARCHAR"},
+        "approval_requests": {"policy_version": "VARCHAR", "policy_hash": "VARCHAR"},
+    }
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for table, columns in expected.items():
+            existing = {column["name"] for column in inspector.get_columns(table)}
+            for name, ddl_type in columns.items():
+                if name not in existing:
+                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
 
 
 def reset_db() -> None:
