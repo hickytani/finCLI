@@ -10,9 +10,10 @@ class FinGuardAgentClient:
     def __init__(self, actor_id: str = "treasury-agent", session_id: str | None = None):
         self.actor_id, self.session_id = actor_id, session_id or "agent-sdk"
 
-    def create_transaction(self, amount: float, currency: str, destination: str, purpose: str, metadata: dict | None = None, from_account: str = "treasury"):
+    def create_transaction(self, amount: float, currency: str, destination: str, purpose: str, metadata: dict | None = None, from_account: str = "treasury", ai_assessment: dict | None = None):
+        """Submit an untrusted request; AI fields are evidence only, never authority."""
         tx = Transaction(actor_id=self.actor_id, session_id=self.session_id, from_account=from_account, to_account=destination, amount=amount, currency=Currency(currency.upper()), metadata={**(metadata or {}), "purpose": purpose}, initiating_actor_type=ActorType.AGENT.value)
-        return DecisionEngine().decide(tx)
+        return DecisionEngine().decide(tx, ai_assessment=ai_assessment)
 
     def inspect_transaction(self, transaction_id: str):
         session = get_session()

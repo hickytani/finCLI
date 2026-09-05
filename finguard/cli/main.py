@@ -62,6 +62,7 @@ audit_app = typer.Typer(help="Tamper-evident audit ledger.")
 incident_app = typer.Typer(help="Security incident management.")
 decision_app = typer.Typer(help="Central authorization decision receipts.")
 agent_app = typer.Typer(help="Untrusted treasury agent orchestration.")
+simulator_app = typer.Typer(help="Local-only virtual financial system controlled by FinGuard.")
 
 app.add_typer(key_app, name="key")
 app.add_typer(identity_app, name="identity")
@@ -76,6 +77,7 @@ app.add_typer(audit_app, name="audit")
 app.add_typer(incident_app, name="incident")
 app.add_typer(decision_app, name="decision")
 app.add_typer(agent_app, name="agent")
+app.add_typer(simulator_app, name="simulator")
 
 
 @decision_app.command("inspect")
@@ -106,7 +108,31 @@ def agent_run(task: str = typer.Argument(help="Natural-language payment task."))
 @agent_app.command("status")
 def agent_status():
     """Show the configured agent model state."""
-    console.print("Treasury agent: bounded local fallback; model=not-configured")
+    from finguard.ai.model import OllamaModel
+    import json
+    console.print(json.dumps(OllamaModel().status(), indent=2))
+
+
+@simulator_app.command("balances")
+def simulator_balances():
+    """Show virtual account balances; this never accesses real money."""
+    _ensure_init()
+    from finguard.simulator import FinancialSimulator
+    import json
+    console.print(json.dumps(FinancialSimulator().balances(), indent=2))
+
+
+@simulator_app.command("execute")
+def simulator_execute(transaction_id: str = typer.Argument(help="FinGuard-signed transaction ID.")):
+    """Execute a signed transaction in the local simulator only."""
+    _ensure_init()
+    from finguard.simulator import FinancialSimulator
+    import json
+    try:
+        console.print(json.dumps(FinancialSimulator().execute(transaction_id), indent=2))
+    except Exception as exc:
+        console.print(f"[bold red]SIMULATOR BLOCKED:[/bold red] {exc}")
+        raise typer.Exit(code=1)
 
 
 def _ensure_init() -> None:

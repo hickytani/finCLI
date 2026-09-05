@@ -196,3 +196,25 @@ class NonceRecord(Base):
     nonce = Column(String, primary_key=True)
     transaction_id = Column(String, nullable=False)
     used_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class SimulatorAccountRecord(Base):
+    """A synthetic account. This table never represents real money."""
+    __tablename__ = "simulator_accounts"
+
+    account_id = Column(String, primary_key=True)
+    currency = Column(String, nullable=False)
+    balance = Column(Float, nullable=False, default=0.0)
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class SimulatorExecutionRecord(Base):
+    """Exactly one settled simulator movement per FinGuard transaction."""
+    __tablename__ = "simulator_executions"
+
+    execution_id = Column(String, primary_key=True)
+    transaction_id = Column(String, ForeignKey("transactions.transaction_id"), nullable=False, unique=True)
+    transaction_hash = Column(String, nullable=False)
+    signature = Column(Text, nullable=False)
+    executed_at = Column(DateTime, default=datetime.datetime.utcnow)

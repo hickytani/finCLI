@@ -33,6 +33,7 @@ class TransactionState(str, Enum):
     PENDING_APPROVAL = "pending_approval"
     APPROVED = "approved"
     SIGNED = "signed"
+    EXECUTED = "executed"
     BLOCKED = "blocked"
     FAILED = "failed"
 
