@@ -81,5 +81,7 @@ def init_db() -> None:
 def reset_db() -> None:
     """Drop and recreate all tables. FOR TESTING ONLY."""
     global _engine, _session_factory
+    if _engine is not None:
+        _engine.dispose()
     _engine = None
     _session_factory = None

@@ -1,8 +1,8 @@
 {
   "attestation_type": "FIN//GUARD Audit Ledger Verification",
-  "timestamp": "2026-09-05T08:44:13.855236+00:00",
-  "chain_root_hash": "6654e03fe692058b1c15b2ced092ac75bd60594bd5c9c562f7af5ef29152d3bf",
-  "entry_count": 34,
+  "timestamp": "2026-09-06T10:03:19.839356+00:00",
+  "chain_root_hash": "8adbb03d5525e50d1d28403172e7dff3976f54e260403ab6a0b2283f3af8fde7",
+  "entry_count": 197,
   "invariants_checked": [
     "HASH_CHAIN_INTEGRITY",
     "REPLAY_PROTECTION",
@@ -10,7 +10,7 @@
     "AGENT_APPROVAL_FLOOR"
   ],
   "integrity_result": "PASS",
-  "verification_notes": "All 34 entries valid",
+  "verification_notes": "All 197 entries valid",
   "attestor_pubkey": "ae54d9a686b934155e393f7d35d18f36ed525e3ac8c90cdbf877b7ac1ae28088",
-  "signature": "7a4994ab34e61a42636dc2acb9480612b5864d02968d9f36d6d64e3a8a7958096bb7835d5efca05ed49b4bd5afcd6a850875806b5ecb4a5c28ab97039057bb0e"
+  "signature": "cbce2c6b54eac8c3988b7210c44c531d5077cf053988b33ab729931e78b064755a6fede13dea2814605116b26e836d8f61727579b8be6fb7c058283b7a7c680d"
 }

@@ -174,6 +174,9 @@ class ScenarioLoader:
 
                     if expect == "BLOCKED":
                         step_passed = (tx_obj.state == TransactionState.BLOCKED)
+                        if expect_reason and expect_reason.lower() not in pol_decision.explanation.lower():
+                            step_passed = False
+                            trace.append(f"  - EXPECTATION FAILED: reason does not contain '{expect_reason}'")
                         step_results.append(ScenarioStepResult(
                             step_index=idx + 1,
                             action=action,
@@ -221,6 +224,9 @@ class ScenarioLoader:
                             metadata={"nonce": saved_nonce}
                         )
                         step_passed = (expect == "BLOCKED")
+                        if expect_reason and expect_reason.lower() not in " ".join(trace).lower():
+                            step_passed = False
+                            trace.append(f"  - EXPECTATION FAILED: reason does not contain '{expect_reason}'")
                         step_results.append(ScenarioStepResult(
                             step_index=idx + 1,
                             action=action,
@@ -240,8 +246,8 @@ class ScenarioLoader:
                         # Simulate human approver sign
                         approver_actor = registry.validate_actor("approver-1")
                         keystore = Keystore()
-                        key_id = "approver-key"
-                        passw = "password123"
+                        key_id = "scenario-approver-key"
+                        passw = "scenario-password"
                         try:
                             keystore.get_public_key(key_id)
                         except Exception:
@@ -286,7 +292,7 @@ class ScenarioLoader:
                         valid_approvals = approval_service.verify_approval_integrity(tx_obj)
                         if not valid_approvals or original_hash != tx_obj.transaction_hash():
                             tx_obj.state = TransactionState.BLOCKED
-                            trace.append("  - SIGNING BLOCKED: Cryptographic approval hash mismatch / tampering detected.")
+                            trace.append("  - SIGNING BLOCKED: Cryptographic approval hash mismatch / integrity tampering detected.")
                             inc = incident_service.create_incident(
                                 severity=IncidentSeverity.CRITICAL,
                                 description=f"TRANSACTION TAMPERING DETECTED in scenario '{name}'. Hash mismatch: original={original_hash}, modified={tx_obj.transaction_hash()}",
@@ -305,6 +311,9 @@ class ScenarioLoader:
                             )
 
                         step_passed = (tx_obj.state == TransactionState.BLOCKED and expect == "BLOCKED")
+                        if expect_reason and expect_reason.lower() not in " ".join(trace).lower():
+                            step_passed = False
+                            trace.append(f"  - EXPECTATION FAILED: reason does not contain '{expect_reason}'")
                         step_results.append(ScenarioStepResult(
                             step_index=idx + 1,
                             action=action,

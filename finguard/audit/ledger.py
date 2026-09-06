@@ -227,13 +227,17 @@ class AuditLedger:
                 session.close()
 
     @staticmethod
-    def verify_attestation(report_dict: dict) -> bool:
+    def verify_attestation(report_dict: dict, trusted_pubkey_hex: Optional[str] = None) -> bool:
         """Verify the signature on an AttestationReport JSON artifact."""
         report = dict(report_dict)
         signature = report.pop("signature", None)
-        pubkey_hex = report.get("attestor_pubkey")
+        embedded_pubkey_hex = report.get("attestor_pubkey")
+        if trusted_pubkey_hex is None:
+            trusted_path = get_config().data_dir / "attestor.pub"
+            trusted_pubkey_hex = trusted_path.read_text(encoding="utf-8").strip() if trusted_path.exists() else None
+        pubkey_hex = trusted_pubkey_hex
 
-        if not signature or not pubkey_hex:
+        if not signature or not pubkey_hex or embedded_pubkey_hex != pubkey_hex:
             return False
 
         body_bytes = json.dumps(report, sort_keys=True).encode("utf-8")

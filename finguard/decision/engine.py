@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError as SqlIntegrityError
 from finguard.approvals.service import ApprovalService
 from finguard.audit.ledger import AuditLedger
 from finguard.core.canonical import canonical_serialize
-from finguard.core.enums import DecisionType, TransactionState
+from finguard.core.enums import ActorType, DecisionType, TransactionState
 from finguard.core.transaction import Transaction
 from finguard.crypto.hashing import sha256_hash
 from finguard.identity.registry import IdentityRegistry
@@ -79,12 +79,17 @@ class DecisionEngine:
                 raise ValueError("Unknown identity")
             if transaction.initiating_actor_type and transaction.initiating_actor_type != actor.actor_type.value:
                 raise ValueError("Actor type claim does not match signed identity")
+            if actor.session_binding_required and not transaction.session_id:
+                raise ValueError("Session binding is required for this identity")
 
             policy_hash = sha256_hash(canonical_serialize(self.policy_engine.policy.model_dump(mode="json")))
-            authority_allowed = transaction.amount <= actor.authority_limit and (
+            source_allowed = actor.actor_type != ActorType.AGENT or transaction.from_account == "treasury"
+            authority_allowed = source_allowed and transaction.amount <= actor.authority_limit and (
                 not actor.allowed_destinations or "*" in actor.allowed_destinations or transaction.to_account in actor.allowed_destinations
             ) and actor.active
-            authority_reasons = ["Authority checks passed"] if authority_allowed else ["Signed identity authority violation"]
+            authority_reasons = ["Authority checks passed"] if authority_allowed else [
+                "Agent source account is not authorized" if not source_allowed else "Signed identity authority violation"
+            ]
 
             # Atomic nonce claim: the UNIQUE constraint is the replay boundary.
             session = get_session()

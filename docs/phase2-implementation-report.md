@@ -51,9 +51,9 @@ the implementation does not weaken security merely to make that example pass.
 
 ## Latest verification
 
-```text
-43 passed
-```
+The earlier `43 passed` value is a historical checkpoint, not the current
+repository total. Re-run the documented full-suite command for the current
+count; the final release audit records the resulting output separately.
 
 The suite covers existing security controls plus local-AI validation,
 full LLM-to-execution flow, simulator replay/signature checks, prompt

@@ -92,3 +92,11 @@ def test_same_nonce_second_request_is_blocked():
     second = _agent_transaction()
     second.nonce = first.nonce
     assert DecisionEngine().decide(second).decision.value == "block"
+
+
+def test_agent_cannot_select_an_unauthorized_source_account():
+    forged = _agent_transaction()
+    forged.from_account = "vendor-a"
+    decision = DecisionEngine().decide(forged)
+    assert decision.decision.value == "block"
+    assert "source account" in " ".join(decision.receipt.reasons).lower()

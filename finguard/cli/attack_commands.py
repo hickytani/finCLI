@@ -6,6 +6,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from finguard.attacks.scenario_loader import ScenarioLoader
+from finguard.redteam.ai_runner import AIRedTeamRunner
+from finguard.redteam.runner import RedTeamRunner
 
 console = Console()
 
@@ -95,3 +97,53 @@ def do_attack_suite():
 
     console.print(table)
     console.print(f"\n[bold green]Suite Completed:[/bold green] {passed_count}/{len(scenarios)} attack vectors successfully defended.")
+
+
+def do_redteam_run(repetitions: int = 1):
+    """Run product and declarative attacks and print measured outcomes."""
+    report = RedTeamRunner().run(repetitions)
+    status = "PASS" if report.passed else "FAIL"
+    color = "green" if report.passed else "red"
+    console.print(f"\n[bold cyan]FIN//GUARD RED TEAM[/bold cyan] ({repetitions} run{'s' if repetitions != 1 else ''})")
+    console.print(f"[bold {color}]SECURITY BOUNDARY: {status}[/bold {color}]")
+    console.print(f"ATTACKS: {report.total_attempts}")
+    console.print(f"INDEPENDENT FAMILIES: {report.independent_families}")
+    console.print(f"PASSED: {report.blocked}")
+    console.print(f"FAILED: {report.failed}")
+    console.print(f"OBSERVED UNAUTHORIZED FUNDS MOVED: INR {report.observed_unauthorized_funds_moved:g}")
+    console.print(f"UNMEASURED FUND MOVEMENT: {report.unmeasured_fund_movement}")
+    console.print(f"SIGNING BOUNDARY CHECKS: {report.signing_boundary_checked}/{report.signing_boundary_total}")
+    console.print(f"SIGNING-BOUNDARY VIOLATIONS: {report.signing_boundary_violations}")
+    if report.errors:
+        console.print(f"ERRORS: {len(report.errors)}")
+        for error in report.errors:
+            console.print(f"  [red]{error['attack_id']}: {error['error']}[/red]")
+    if not report.passed:
+        raise typer.Exit(code=1)
+
+
+def do_redteam_ai(repetitions: int = 1):
+    """Run malicious prompts through the real local AI request path."""
+    results = AIRedTeamRunner().run(repetitions=repetitions)
+    summary = AIRedTeamRunner.summarize(results)
+    console.print("\n[bold cyan]FIN//GUARD AI RED TEAM[/bold cyan]")
+    for result in results:
+        outcome = result["outcome"]
+        color = "green" if outcome == "BLOCKED_BY_FINGUARD" else "yellow" if outcome in {"MODEL_REFUSED", "INVALID_MODEL_OUTPUT", "INCONCLUSIVE"} else "red"
+        console.print(f"\n[bold][{result['attack_id'].upper()}][/bold]")
+        console.print(f"[{color}]{outcome}[/{color}]")
+        if result["decision_reasons"]:
+            reasons = result["decision_reasons"]
+            console.print(f"Reason: {reasons[0] if isinstance(reasons, list) else reasons}")
+
+    console.print("\n────────────────────────────")
+    console.print(f"AI ATTACKS: {len(results)}")
+    console.print(f"MODEL REFUSED: {summary['MODEL_REFUSED']}")
+    console.print(f"BLOCKED BY FINGUARD: {summary['BLOCKED_BY_FINGUARD']}")
+    console.print(f"REACHED APPROVAL: {summary['REACHED_APPROVAL']}")
+    console.print(f"SIGNING REJECTIONS: {summary['SIGNING_REJECTED']}")
+    console.print(f"EXECUTED: {summary['EXECUTED']}")
+    console.print(f"ALLOWED: {summary['MODEL_OUTPUT_ALLOWED']}")
+    console.print(f"INVALID MODEL OUTPUT: {summary['INVALID_MODEL_OUTPUT']}")
+    console.print(f"INCONCLUSIVE: {summary['INCONCLUSIVE']}")
+    console.print(f"UNAUTHORIZED EXECUTION: {summary['UNAUTHORIZED_EXECUTION']}")

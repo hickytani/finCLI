@@ -57,6 +57,7 @@ policy_app = typer.Typer(help="Policy management and testing.")
 approval_app = typer.Typer(help="Approval workflows.")
 risk_app = typer.Typer(help="Risk analysis.")
 attack_app = typer.Typer(help="Adversarial attack laboratory.")
+redteam_app = typer.Typer(help="Measured red-team security evaluation.")
 attest_app = typer.Typer(help="Signed attestation reports.")
 audit_app = typer.Typer(help="Tamper-evident audit ledger.")
 incident_app = typer.Typer(help="Security incident management.")
@@ -72,6 +73,7 @@ app.add_typer(policy_app, name="policy")
 app.add_typer(approval_app, name="approval")
 app.add_typer(risk_app, name="risk")
 app.add_typer(attack_app, name="attack")
+app.add_typer(redteam_app, name="redteam")
 app.add_typer(attest_app, name="attest")
 app.add_typer(audit_app, name="audit")
 app.add_typer(incident_app, name="incident")
@@ -427,6 +429,25 @@ def attack_suite():
     _ensure_init()
     from finguard.cli.attack_commands import do_attack_suite
     do_attack_suite()
+
+
+@redteam_app.command("run")
+def redteam_run(
+    repetitions: int = typer.Option(1, "--repetitions", min=1, help="Repeat each attack class."),
+):
+    """Run the measured red-team evaluation."""
+    _ensure_init()
+    from finguard.cli.attack_commands import do_redteam_run
+    do_redteam_run(repetitions)
+
+
+@redteam_app.command("ai")
+def redteam_ai(
+    repetitions: int = typer.Option(1, "--repetitions", min=1, help="Repeat each of the 10 AI attacks."),
+):
+    """Run malicious prompts through the real local AI request path."""
+    from finguard.cli.attack_commands import do_redteam_ai
+    do_redteam_ai(repetitions)
 
 
 # ── Attestation Commands ──────────────────────────────────────────────
