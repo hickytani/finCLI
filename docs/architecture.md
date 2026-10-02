@@ -6,7 +6,7 @@ This document distinguishes code that exists from the target architecture. It
 was checked against the current source tree on 2026-10-02; passing tests are
 listed separately in `docs/INVARIANTS.md` and do not prove untested properties.
 
-## Runtime Flow
+## Runtime FlowInvalidTransitionError, 
 
 ```mermaid
 flowchart TD
@@ -82,6 +82,21 @@ ALLOW outcome. Approval can move pending to approved; the signing gate moves to
 signed; simulator moves to executed. These transitions are spread across
 services, not enforced by a single state-machine module. Signing checks state
 then writes later; it is not a compare-and-swap operation.
+
+### M2 explicit control-plane contract
+
+The repository now enforces a single lifecycle boundary in `finguard/core/state_machine.py`.
+The authoritative graph is:
+
+- `CREATED -> {PENDING_APPROVAL, SIGNED, BLOCKED, FAILED}`
+- `PENDING_APPROVAL -> {APPROVED, SIGNED, BLOCKED, FAILED}`
+- `APPROVED -> {SIGNED, BLOCKED, FAILED}`
+- `SIGNED -> {EXECUTED, BLOCKED, FAILED}`
+- `EXECUTED`, `BLOCKED`, `FAILED` are terminal states
+
+The signing path is intentionally allowed from both the direct allow-path (`CREATED`) and the approval-backed path (`APPROVED` or a revalidated `PENDING_APPROVAL`) because the signing gate rechecks the stored decision receipt, policy, authority, nonce, and approval evidence before emitting the signature.
+
+The `Transaction.transition_to()` method validates the requested transition and rejects stale work by comparing the expected version before the state change is committed. This does not yet implement a full distributed ledger checkpoint or a database-triggered append-only ledger, but it closes the most dangerous control-plane gap: silent, direct state mutation without an audited transition boundary.
 
 ## Dependency Graph
 

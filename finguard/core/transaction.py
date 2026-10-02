@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from finguard.core.canonical import canonical_amount, canonical_serialize
 from finguard.core.enums import Currency, TransactionState
 from finguard.core.errors import ValidationError
+from finguard.core.state_machine import InvalidTransitionError, TransactionStateMachine
 from finguard.crypto.hashing import sha256_hash
 from finguard.money import Money
 
@@ -60,10 +61,41 @@ class Transaction(BaseModel):
 
     # Non-canonical fields (not included in security hash)
     state: TransactionState = TransactionState.CREATED
+    revision: int = Field(default=1, ge=1)
     signature: Optional[str] = None
     signing_key_id: Optional[str] = None
 
     model_config = ConfigDict(validate_assignment=True)
+
+    @property
+    def version(self) -> int:
+        return self.revision
+
+    @version.setter
+    def version(self, value: int) -> None:
+        self.revision = value
+
+    def transition_to(
+        self,
+        new_state: TransactionState | str,
+        *,
+        expected_version: int | None = None,
+        reason: str | None = None,
+    ) -> TransactionState:
+        """Transition the transaction through the deterministic lifecycle graph."""
+        current_state = self.state
+        if expected_version is not None and self.revision != expected_version:
+            raise InvalidTransitionError(
+                f"Cannot transition transaction '{self.transaction_id}' to '{TransactionStateMachine.normalize(new_state).value}'; "
+                f"expected version {expected_version} but found {self.revision}."
+            )
+        if current_state == TransactionStateMachine.normalize(new_state):
+            return current_state
+
+        TransactionStateMachine.validate_transition(current_state, new_state)
+        self.state = TransactionStateMachine.normalize(new_state)
+        self.revision += 1
+        return self.state
 
     @model_validator(mode="before")
     @classmethod

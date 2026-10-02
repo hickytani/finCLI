@@ -18,6 +18,7 @@ from finguard.approvals.service import ApprovalService
 from finguard.audit.ledger import AuditLedger
 from finguard.core.canonical import canonical_serialize
 from finguard.core.enums import ActorType, DecisionType, TransactionState
+from finguard.core.state_machine import TransactionStateMachine
 from finguard.core.transaction import Transaction
 from finguard.crypto.hashing import sha256_hash
 from finguard.identity.registry import IdentityRegistry
@@ -180,7 +181,8 @@ class DecisionEngine:
                     })
             reasons = authority_reasons + policy.reasons
             state = {DecisionType.BLOCK: TransactionState.BLOCKED, DecisionType.REQUIRE_APPROVAL: TransactionState.PENDING_APPROVAL, DecisionType.ALLOW: TransactionState.CREATED}[decision]
-            transaction.state = state
+            TransactionStateMachine.validate_transition(transaction.state, state)
+            transaction.transition_to(state)
             approval_state = "not_required"
             if decision == DecisionType.REQUIRE_APPROVAL:
                 ApprovalService().create_approval_request(transaction, policy.required_approvals, transaction.actor_id)

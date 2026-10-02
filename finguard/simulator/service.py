@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError as SqlIntegrityError
 from finguard.audit.ledger import AuditLedger
 from finguard.core.enums import Currency, TransactionState
 from finguard.core.errors import SecurityError
+from finguard.core.state_machine import TransactionStateMachine
 from finguard.core.transaction import Transaction
 from finguard.crypto.keystore import Keystore
 from finguard.crypto.signing import verify_signature
@@ -65,6 +66,7 @@ class FinancialSimulator:
                 raise SimulatorError("Transaction not found")
             if record.state != TransactionState.SIGNED.value:
                 raise SimulatorError("Only a SigningGate-signed transaction may execute")
+            TransactionStateMachine.validate_transition(record.state, TransactionState.EXECUTED)
             if record.canonical_version != 2:
                 raise SimulatorError("Legacy transaction cannot be executed")
             if session.query(SimulatorExecutionRecord).filter_by(transaction_id=transaction_id).first():

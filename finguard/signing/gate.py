@@ -6,6 +6,7 @@ from finguard.audit.ledger import AuditLedger
 from finguard.core.canonical import canonical_serialize
 from finguard.core.enums import Currency, DecisionType, TransactionState
 from finguard.core.errors import SecurityError
+from finguard.core.state_machine import InvalidTransitionError, TransactionStateMachine
 from finguard.core.transaction import Transaction
 from finguard.crypto.hashing import sha256_hash
 from finguard.crypto.keystore import Keystore
@@ -27,6 +28,10 @@ class SigningGate:
                 raise SecurityError("Transaction not found")
             if rec.canonical_version != 2:
                 raise SecurityError("Legacy transaction must be resubmitted before signing")
+            try:
+                TransactionStateMachine.validate_transition(rec.state, TransactionState.SIGNED)
+            except InvalidTransitionError as exc:
+                raise SecurityError("Transaction state does not permit signing") from exc
             # Reconstruct Transaction preferring exact minor units to avoid float round-trip
             if rec.amount_minor is None:
                 raise SecurityError("Legacy transaction must be resubmitted before signing")
@@ -90,6 +95,10 @@ class SigningGate:
             rec = TransactionRepository(session).get(transaction_id)
             if rec.state == TransactionState.SIGNED.value:
                 raise SecurityError("Transaction is already signed")
+            try:
+                TransactionStateMachine.validate_transition(rec.state, TransactionState.SIGNED)
+            except InvalidTransitionError as exc:
+                raise SecurityError("Transaction state does not permit signing") from exc
             signature = sign_canonical_bytes(tx.canonical_bytes(), Keystore().load_private_key(key_id, password))
             rec.signature, rec.signing_key_id, rec.state = signature, key_id, TransactionState.SIGNED.value
             TransactionRepository(session).save(rec)

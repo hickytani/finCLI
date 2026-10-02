@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from finguard.core.enums import TransactionState, ActorType, ApprovalState
 from finguard.core.errors import SecurityError, IntegrityError
+from finguard.core.state_machine import TransactionStateMachine
 from finguard.core.transaction import Transaction
 from finguard.crypto.keystore import Keystore
 from finguard.crypto.signing import sign_canonical_bytes, verify_signature
@@ -115,7 +116,8 @@ class ApprovalService:
             if any(a.approver_id == approver.actor_id for a in existing_approvals):
                 raise SecurityError(f"Approver '{approver.actor_id}' has already approved transaction '{transaction_id}'. Duplicate approvals are rejected.")
 
-            if tx_rec.state not in (TransactionState.PENDING_APPROVAL.value, TransactionState.CREATED.value):
+            current_state = TransactionStateMachine.normalize(tx_rec.state)
+            if current_state not in {TransactionState.PENDING_APPROVAL, TransactionState.CREATED}:
                 raise SecurityError(f"Transaction '{transaction_id}' is in state '{tx_rec.state}', cannot approve.")
 
             req = appr_repo.get_request(transaction_id)
@@ -195,6 +197,7 @@ class ApprovalService:
             req.current_approvals = valid_count
             if req.current_approvals >= req.required_approvals:
                 req.state = ApprovalState.APPROVED.value
+                TransactionStateMachine.validate_transition(tx_rec.state, TransactionState.APPROVED)
                 tx_rec.state = TransactionState.APPROVED.value
                 tx_repo.save(tx_rec)
             appr_repo.save_request(req)
