@@ -9,6 +9,7 @@ are detected, blocked, recorded in tamper-evident audit logs, and trigger incide
 
 import yaml
 from pathlib import Path
+from decimal import Decimal
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
@@ -112,7 +113,7 @@ class ScenarioLoader:
                         actor_id=actor_id,
                         from_account=step.get("from_account", "treasury"),
                         to_account=step.get("to_account", "vendor-a"),
-                        amount=float(step.get("amount", 1000.0)),
+                        amount=step.get("amount", "1000.00"),
                         currency=Currency(step.get("currency", "INR").upper())
                     )
                     original_hash = tx_obj.transaction_hash()
@@ -155,7 +156,9 @@ class ScenarioLoader:
                         actor_id=tx_obj.actor_id,
                         from_account=tx_obj.from_account,
                         to_account=tx_obj.to_account,
-                        amount=tx_obj.amount,
+                        amount=Decimal(tx_obj.money.to_decimal_string()),
+                        amount_minor=tx_obj.amount_minor,
+                        canonical_version=2,
                         currency=tx_obj.currency.value,
                         nonce=tx_obj.nonce,
                         timestamp=tx_obj.timestamp,
@@ -273,7 +276,8 @@ class ScenarioLoader:
                         field_name = step.get("field")
                         new_val = step.get("new_value")
                         if field_name == "amount":
-                            tx_obj.amount = float(new_val)
+                            from finguard.money import Money
+                            tx_obj.amount = Money.from_decimal(str(new_val), tx_obj.currency)
                         elif field_name == "to_account":
                             tx_obj.to_account = str(new_val)
 

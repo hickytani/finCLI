@@ -72,6 +72,14 @@ def init_db() -> None:
 
     # Column migrations: tables -> {column_name: DDL_type}
     column_migrations = {
+        "transactions": {
+            "amount_minor": "BIGINT",
+            "canonical_version": "INTEGER NOT NULL DEFAULT 1",
+            "failure_reason": "TEXT",
+        },
+        "decision_receipts": {
+            "canonical_version": "INTEGER NOT NULL DEFAULT 1",
+        },
         "approvals": {
             "request_id": "VARCHAR",
             "policy_version": "VARCHAR",

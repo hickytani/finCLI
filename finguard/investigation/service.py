@@ -21,6 +21,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from finguard.core.errors import SecurityError
+from finguard.money import Money
 from finguard.storage.database import get_session
 from finguard.storage.models import (
     AuditEntryRecord,
@@ -50,7 +51,8 @@ class TransactionSummary:
     actor_id: str
     from_account: str
     to_account: str
-    amount: float
+    amount: str
+    amount_minor: Optional[int]
     currency: str
     state: str
     timestamp: datetime.datetime
@@ -64,7 +66,9 @@ class TransactionSummary:
             actor_id=r.actor_id,
             from_account=r.from_account,
             to_account=r.to_account,
-            amount=r.amount,
+                amount=(Money(minor_units=r.amount_minor, currency=r.currency).to_decimal_string()
+                    if r.amount_minor is not None else str(r.amount)),
+                amount_minor=r.amount_minor,
             currency=r.currency,
             state=r.state,
             timestamp=r.timestamp,
@@ -545,7 +549,7 @@ class InvestigationService:
                 source_type="transaction",
                 source_id=trace.transaction.transaction_id,
                 summary=f"Transaction {trace.transaction.transaction_id}: "
-                        f"{trace.transaction.currency} {trace.transaction.amount:.2f} "
+                        f"{trace.transaction.currency} {trace.transaction.amount} "
                         f"{trace.transaction.from_account} → {trace.transaction.to_account} "
                         f"[{trace.transaction.state}]",
                 metadata={

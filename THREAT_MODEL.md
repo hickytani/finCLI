@@ -4,10 +4,16 @@
 
 FinGuard assumes its primary adversary is **not** a traditional human hacker with stolen password credentials, but an **autonomous AI agent** (compromised, prompt-injected, jailbroken, or simply misinstructed) that possesses legitimate API/tool-calling credentials to request financial transactions.
 
-The central security question FinGuard answers is:
-> *Can an autonomous AI agent, by any sequence of tool calls or parameter manipulation, cause funds to be cryptographically authorized without an independently verifiable, cryptographically bound human decision in the loop?*
+The central security question FIN//GUARD investigates is:
+> *Can an autonomous AI agent, by a sequence of tool calls or parameter manipulation, cause an unauthorized synthetic transfer to be authorized or executed?*
 
-FinGuard enforces a provable **NO**.
+The current implementation applies deterministic identity, authority, policy,
+replay, approval, signing, and simulator checks on its implemented local
+CLI/SDK path. This is not a proof of a universal **NO**. Decision writes are not
+atomic, signing is not protected by CAS, the hash ledger has no signed
+checkpoint, no product MCP server exists, and an attacker able to rewrite the
+entire SQLite file can recompute its unkeyed ledger chain. Claims must remain
+limited to behaviors with passing tests and measured evaluation evidence.
 
 ---
 

@@ -123,8 +123,8 @@ def investigate_events(
     from_account: str = typer.Option(None, "--from", help="Filter by source account."),
     since: str = typer.Option(None, "--since", help="Start datetime (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)."),
     until: str = typer.Option(None, "--until", help="End datetime (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)."),
-    min_amount: float = typer.Option(None, "--min-amount", help="Minimum transaction amount."),
-    max_amount: float = typer.Option(None, "--max-amount", help="Maximum transaction amount."),
+    min_amount: str = typer.Option(None, "--min-amount", help="Minimum transaction amount as decimal text."),
+    max_amount: str = typer.Option(None, "--max-amount", help="Maximum transaction amount as decimal text."),
     page: int = typer.Option(1, "--page", help="Page number (1-based)."),
     page_size: int = typer.Option(20, "--page-size", help="Results per page (max 100)."),
     json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
@@ -363,7 +363,7 @@ def identity_register(
     actor_id: str = typer.Option(..., "--actor-id", help="Actor ID."),
     actor_type: str = typer.Option(..., "--type", help="Actor type (human_operator or agent)."),
     display_name: str = typer.Option(..., "--name", help="Display name."),
-    limit: float = typer.Option(10000.0, "--limit", help="Authority limit."),
+    limit: str = typer.Option("10000.00", "--limit", help="Authority limit as decimal text."),
     destinations: str = typer.Option("", "--destinations", help="Comma-separated allowed destinations."),
     root_key: str = typer.Option(..., "--root-key", help="Path to root operator private key."),
 ):
@@ -378,7 +378,7 @@ def identity_register(
 def agent_tx_create(
     from_account: str = typer.Option(..., "--from", help="Source account."),
     to_account: str = typer.Option(..., "--to", help="Destination account."),
-    amount: float = typer.Option(..., "--amount", help="Transaction amount."),
+    amount: str = typer.Option(..., "--amount", help="Transaction amount as a decimal string."),
     currency: str = typer.Option("INR", "--currency", help="Currency code."),
     actor: str = typer.Option("treasury-agent", "--actor", help="Agent Actor ID."),
     session: str = typer.Option(None, "--session", help="Session ID."),
@@ -394,7 +394,7 @@ def agent_tx_create(
 def tx_create(
     from_account: str = typer.Option(..., "--from", help="Source account."),
     to_account: str = typer.Option(..., "--to", help="Destination account."),
-    amount: float = typer.Option(..., "--amount", help="Transaction amount."),
+    amount: str = typer.Option(..., "--amount", help="Transaction amount as a decimal string."),
     currency: str = typer.Option("INR", "--currency", help="Currency code."),
     actor: str = typer.Option(None, "--actor", help="Actor ID."),
     metadata: str = typer.Option(None, "--metadata", help="JSON metadata."),

@@ -10,7 +10,7 @@ SECURITY PROPERTY:
 import uuid
 import datetime
 import json
-from typing import Optional
+from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from finguard.core.enums import TransactionState, ActorType, ApprovalState
@@ -95,9 +95,6 @@ class ApprovalService:
             if not tx_rec:
                 raise SecurityError(f"Transaction '{transaction_id}' not found.")
 
-            if tx_rec.state not in (TransactionState.PENDING_APPROVAL.value, TransactionState.CREATED.value):
-                raise SecurityError(f"Transaction '{transaction_id}' is in state '{tx_rec.state}', cannot approve.")
-
             if approver.actor_type not in (ActorType.APPROVER, ActorType.HUMAN_OPERATOR, ActorType.HUMAN):
                 raise SecurityError(f"Actor '{approver.actor_id}' of type '{approver.actor_type}' cannot approve transactions.")
             if approver.actor_id == tx_rec.actor_id:
@@ -114,9 +111,21 @@ class ApprovalService:
                 ))
 
             appr_repo = ApprovalRepository(session)
+            existing_approvals = appr_repo.get_approvals(transaction_id)
+            if any(a.approver_id == approver.actor_id for a in existing_approvals):
+                raise SecurityError(f"Approver '{approver.actor_id}' has already approved transaction '{transaction_id}'. Duplicate approvals are rejected.")
+
+            if tx_rec.state not in (TransactionState.PENDING_APPROVAL.value, TransactionState.CREATED.value):
+                raise SecurityError(f"Transaction '{transaction_id}' is in state '{tx_rec.state}', cannot approve.")
+
             req = appr_repo.get_request(transaction_id)
 
             if not req:
+                # Reconstruct the Transaction, preferring exact minor units
+                if tx_rec.amount_minor is None:
+                    raise SecurityError("Legacy transaction must be resubmitted before approval")
+                from finguard.money import Money
+                _tx_amount = Money(minor_units=tx_rec.amount_minor, currency=tx_rec.currency)
                 req = self.create_approval_request(
                     transaction=Transaction(
                         transaction_id=tx_rec.transaction_id,
@@ -124,10 +133,13 @@ class ApprovalService:
                         session_id=tx_rec.session_id,
                         from_account=tx_rec.from_account,
                         to_account=tx_rec.to_account,
-                        amount=tx_rec.amount,
+                        amount=_tx_amount,
                         currency=tx_rec.currency,
                         nonce=tx_rec.nonce,
-                        timestamp=tx_rec.timestamp
+                        timestamp=tx_rec.timestamp,
+                        idempotency_key=tx_rec.idempotency_key,
+                        policy_version=tx_rec.policy_version,
+                        metadata=json.loads(tx_rec.metadata_json) if tx_rec.metadata_json else None,
                     ),
                     required_approvals=1,
                     requester_id=tx_rec.actor_id

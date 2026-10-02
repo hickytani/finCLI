@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 import typer
+from finguard.core.enums import Currency
+from finguard.money import Money
 from rich.console import Console
 from rich.table import Table
 
@@ -35,7 +37,7 @@ def do_identity_list():
             a.actor_id,
             a.actor_type.value,
             a.display_name,
-            f"INR {a.authority_limit:,.2f}",
+            f"INR {Money.from_decimal(a.authority_limit, Currency.INR):,.2f}",
             dest_str,
             "Yes" if a.session_binding_required else "No"
         )
@@ -65,7 +67,7 @@ def do_identity_register(
     actor_id: str,
     actor_type: str,
     display_name: str,
-    limit: float,
+    limit: str,
     destinations: str,
     root_key: str
 ):

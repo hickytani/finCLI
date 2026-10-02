@@ -36,7 +36,7 @@ from finguard.storage.repositories import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_tx(actor_id: str = "operator-1", amount: float = 500.0) -> Transaction:
+def _make_tx(actor_id: str = "operator-1", amount: str = "500.00") -> Transaction:
     return Transaction(
         actor_id=actor_id,
         session_id="test-session",
@@ -62,7 +62,7 @@ def _create_incident(
     )
 
 
-def _run_tx(actor_id: str = "operator-1", amount: float = 500.0):
+def _run_tx(actor_id: str = "operator-1", amount: str = "500.00"):
     """Push a transaction through the decision engine so it has a receipt + audit."""
     tx = _make_tx(actor_id=actor_id, amount=amount)
     return DecisionEngine().decide(tx)
@@ -101,7 +101,7 @@ class TestIncidentTrace:
         assert trace.transaction is None
 
     def test_trace_includes_signals_for_transaction(self):
-        result = _run_tx(actor_id="operator-1", amount=500.0)
+        result = _run_tx(actor_id="operator-1", amount="500.00")
         tx_id = result.transaction.transaction_id
 
         # Inject a signal for this transaction
@@ -239,7 +239,7 @@ class TestEventSearch:
         assert all(t.actor_id == "operator-1" for t in result.items)
 
     def test_search_by_state_filters_correctly(self):
-        _run_tx(actor_id="operator-1", amount=500.0)
+        _run_tx(actor_id="operator-1", amount="500.00")
         svc = InvestigationService()
         result = svc.search_events(state="blocked")
         assert all(t.state == "blocked" for t in result.items)
@@ -308,10 +308,10 @@ class TestEventSearch:
         assert result.total == 0
 
     def test_search_amount_range(self):
-        _run_tx(amount=500.0)
+        _run_tx(amount="500.00")
         svc = InvestigationService()
-        result = svc.search_events(min_amount=100.0, max_amount=1000.0)
-        assert all(100.0 <= t.amount <= 1000.0 for t in result.items)
+        result = svc.search_events(min_amount="100.00", max_amount="1000.00")
+        assert all(10000 <= t.amount_minor <= 100000 for t in result.items)
 
 
 # ---------------------------------------------------------------------------

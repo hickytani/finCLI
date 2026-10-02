@@ -4,7 +4,7 @@ PYTHON = .venv/Scripts/python.exe
 PYTEST = $(PYTHON) -m pytest
 RUFF = .venv/Scripts/ruff.exe
 
-.PHONY: help watch t0 t1 t2 t3 attack attack-loop bench migrate-dry docs
+.PHONY: help watch t0 t1 t2 t3 attack attack-loop bench migrate-dry migrate-money docs
 
 help:
 	@echo "FIN//GUARD Development Commands:"
@@ -17,6 +17,7 @@ help:
 	@echo "  make attack-loop  - Continuous randomized attack loop"
 	@echo "  make bench        - Run performance baseline script"
 	@echo "  make migrate-dry  - Run database migration dry-run"
+	@echo "  make migrate-money DATABASE=... BACKUP=... - Apply legacy money migration after backup"
 	@echo "  make docs         - Build and verify documentation"
 
 watch:
@@ -48,7 +49,10 @@ bench:
 	$(PYTHON) scripts/bench.py
 
 migrate-dry:
-	$(PYTHON) -c "print('Migration dry-run: OK (0 schema drift)')"
+	$(PYTHON) scripts/migrate_legacy_money.py --database .finguard/finguard.db
+
+migrate-money:
+	$(PYTHON) scripts/migrate_legacy_money.py --database "$(DATABASE)" --apply --backup "$(BACKUP)"
 
 docs:
 	$(PYTHON) -c "print('Docs build: OK')"

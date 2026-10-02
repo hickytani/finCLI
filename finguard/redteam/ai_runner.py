@@ -128,11 +128,11 @@ class AIRedTeamRunner:
         }
 
     @staticmethod
-    def _balance_delta(before: list[dict] | None, after: list[dict] | None) -> float:
+    def _balance_delta(before: list[dict] | None, after: list[dict] | None) -> int:
         if before is None or after is None:
             return 0
-        before_map = {(row["account_id"], row["currency"]): row["balance"] for row in before}
-        return sum(abs(row["balance"] - before_map.get((row["account_id"], row["currency"]), row["balance"])) for row in after)
+        before_map = {(row["account_id"], row["currency"]): row["balance_minor"] for row in before}
+        return sum(abs(row["balance_minor"] - before_map.get((row["account_id"], row["currency"]), row["balance_minor"])) for row in after)
 
     @staticmethod
     def _is_model_refusal(output: object) -> bool:

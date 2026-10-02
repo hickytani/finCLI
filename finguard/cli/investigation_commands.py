@@ -118,7 +118,7 @@ def do_incident_trace(incident_id: str, output_json: bool = False) -> None:
         table.add_row("Transaction ID", tx.transaction_id)
         table.add_row("Actor", tx.actor_id)
         table.add_row("Transfer", f"{tx.from_account} → {tx.to_account}")
-        table.add_row("Amount", f"{tx.currency} {tx.amount:,.2f}")
+        table.add_row("Amount", f"{tx.currency} {tx.amount}")
         table.add_row("State", tx.state.upper())
         table.add_row("Timestamp", tx.timestamp.strftime("%Y-%m-%d %H:%M:%S UTC"))
         table.add_row("Canonical Hash", tx.canonical_hash or "N/A")
@@ -210,7 +210,7 @@ def do_tx_trace(transaction_id: str, output_json: bool = False) -> None:
     tx = trace["transaction"]
     console.print(Panel(
         f"TX: [bold cyan]{tx.transaction_id}[/bold cyan]  Actor: {tx.actor_id}\n"
-        f"{tx.from_account} → {tx.to_account}  {tx.currency} {tx.amount:,.2f}\n"
+        f"{tx.from_account} → {tx.to_account}  {tx.currency} {tx.amount}\n"
         f"State: [bold]{tx.state.upper()}[/bold]  Hash: [dim]{tx.canonical_hash}[/dim]\n"
         f"Signals: {len(trace['signals'])}  |  Incidents: {len(trace['incidents'])}  |  Audit: {len(trace['audit_entries'])} entries",
         title=f"Transaction Trace: {transaction_id}",
@@ -302,7 +302,7 @@ def do_event_search(
             t.transaction_id,
             t.actor_id,
             f"{t.from_account} → {t.to_account}",
-            f"{t.currency} {t.amount:,.2f}",
+            f"{t.currency} {t.amount}",
             t.state.upper(),
             t.timestamp.strftime("%Y-%m-%d %H:%M"),
         )

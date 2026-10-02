@@ -8,10 +8,16 @@ Wrap database errors to prevent information leakage.
 """
 
 import datetime
+import re
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
+from sqlalchemy import and_, or_, func
 from sqlalchemy.orm import Session
 
+from finguard.core.enums import Currency
+from finguard.core.errors import MoneyError
+from finguard.money import get_currency_exponent
 from finguard.storage.models import (
     ActorRecord, TransactionRecord, ApprovalRecord, ApprovalRequestRecord,
     AuditEntryRecord, IncidentRecord, SecuritySignalRecord,
@@ -21,6 +27,33 @@ from finguard.storage.models import (
 # Maximum rows any single investigation query may return without explicit override.
 _INVESTIGATION_DEFAULT_LIMIT = 100
 _INVESTIGATION_MAX_LIMIT = 500
+_AMOUNT_FILTER_PATTERN = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z", re.ASCII)
+
+
+def _minor_amount_filter(value: str | int, *, lower: bool):
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise MoneyError("Amount filters require a decimal string or integer")
+    value_text = str(value)
+    if not _AMOUNT_FILTER_PATTERN.fullmatch(value_text):
+        raise MoneyError("Invalid decimal amount filter")
+    try:
+        decimal_value = Decimal(value_text)
+    except InvalidOperation as exc:
+        raise MoneyError("Invalid decimal amount filter") from exc
+    clauses = []
+    for currency in Currency:
+        exponent = get_currency_exponent(currency)
+        minor_value = decimal_value * (10 ** exponent)
+        if minor_value != minor_value.to_integral_value():
+            continue
+        comparison = (
+            TransactionRecord.amount_minor >= int(minor_value)
+            if lower else TransactionRecord.amount_minor <= int(minor_value)
+        )
+        clauses.append(and_(TransactionRecord.currency == currency.value, comparison))
+    if not clauses:
+        raise MoneyError("Amount filter has excess precision for supported currencies")
+    return or_(*clauses)
 
 
 class TransactionRepository:
@@ -72,17 +105,16 @@ class TransactionRepository:
             .count()
         )
 
-    def sum_in_window(self, actor_id: str, since: datetime.datetime) -> float:
-        from sqlalchemy import func
+    def sum_in_window(self, actor_id: str, since: datetime.datetime) -> int:
         result = (
-            self.session.query(func.coalesce(func.sum(TransactionRecord.amount), 0))
+            self.session.query(func.coalesce(func.sum(TransactionRecord.amount_minor), 0))
             .filter(
                 TransactionRecord.actor_id == actor_id,
                 TransactionRecord.timestamp >= since,
             )
             .scalar()
         )
-        return float(result)
+        return int(result)
 
     def search(
         self,
@@ -92,8 +124,8 @@ class TransactionRepository:
         from_account: Optional[str] = None,
         since: Optional[datetime.datetime] = None,
         until: Optional[datetime.datetime] = None,
-        min_amount: Optional[float] = None,
-        max_amount: Optional[float] = None,
+        min_amount: Optional[str | int] = None,
+        max_amount: Optional[str | int] = None,
         offset: int = 0,
         limit: int = _INVESTIGATION_DEFAULT_LIMIT,
     ) -> list[TransactionRecord]:
@@ -117,9 +149,9 @@ class TransactionRepository:
         if until:
             q = q.filter(TransactionRecord.timestamp <= until)
         if min_amount is not None:
-            q = q.filter(TransactionRecord.amount >= min_amount)
+            q = q.filter(_minor_amount_filter(min_amount, lower=True))
         if max_amount is not None:
-            q = q.filter(TransactionRecord.amount <= max_amount)
+            q = q.filter(_minor_amount_filter(max_amount, lower=False))
         return (
             q.order_by(TransactionRecord.timestamp.desc())
             .offset(offset)
@@ -135,8 +167,8 @@ class TransactionRepository:
         from_account: Optional[str] = None,
         since: Optional[datetime.datetime] = None,
         until: Optional[datetime.datetime] = None,
-        min_amount: Optional[float] = None,
-        max_amount: Optional[float] = None,
+        min_amount: Optional[str | int] = None,
+        max_amount: Optional[str | int] = None,
     ) -> int:
         """Count total matching rows for search — used to compute pagination metadata."""
         q = self.session.query(TransactionRecord)
@@ -153,9 +185,9 @@ class TransactionRepository:
         if until:
             q = q.filter(TransactionRecord.timestamp <= until)
         if min_amount is not None:
-            q = q.filter(TransactionRecord.amount >= min_amount)
+            q = q.filter(_minor_amount_filter(min_amount, lower=True))
         if max_amount is not None:
-            q = q.filter(TransactionRecord.amount <= max_amount)
+            q = q.filter(_minor_amount_filter(max_amount, lower=False))
         return q.count()
 
 

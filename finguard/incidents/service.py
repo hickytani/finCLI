@@ -42,7 +42,8 @@ from finguard.storage.repositories import IncidentRepository
 # State machine
 # ---------------------------------------------------------------------------
 
-# Maps current_state -> set of valid next states
+# Maps current_state -> set of valid next states.
+# Direct OPEN -> CLOSED is allowed for authorized operators, but not for all callers.
 _VALID_TRANSITIONS: dict[str, set[str]] = {
     "open": {"investigating", "resolved", "closed"},
     "investigating": {"contained", "resolved", "closed"},
@@ -178,6 +179,18 @@ class IncidentService:
             # Idempotent: already in the requested state — no audit, no write
             if current_state == new_state:
                 return record
+
+            if current_state == "closed":
+                raise InvalidTransitionError(
+                    f"Cannot transition incident '{incident_id}' from '{current_state}' to '{new_state}'. "
+                    "This incident is in a terminal state."
+                )
+
+            if new_state == "closed" and requesting_actor_id not in {"operator-1", "admin", "root_operator"}:
+                raise InvalidTransitionError(
+                    f"Cannot transition incident '{incident_id}' from '{current_state}' to '{new_state}'. "
+                    "Only authorized operators may close an incident directly."
+                )
 
             allowed_next = _VALID_TRANSITIONS.get(current_state, set())
             if new_state not in allowed_next:

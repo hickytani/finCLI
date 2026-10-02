@@ -9,7 +9,6 @@ import pytest
 from finguard.agent import TreasuryAgent
 from finguard.ai.analyzer import LocalAIAnalyzer
 from finguard.approvals.service import ApprovalService
-from finguard.core.errors import SecurityError
 from finguard.crypto.keystore import Keystore
 from finguard.identity.registry import IdentityRegistry
 from finguard.signing import SigningGate
@@ -46,7 +45,8 @@ def test_validated_llm_request_requires_human_then_reaches_simulator():
     SigningGate().sign(response["transaction_id"], "operator-key", "test-password")
     settlement = FinancialSimulator().execute(response["transaction_id"])
     assert settlement["status"] == "executed"
-    assert settlement["amount"] == 5000
+    assert settlement["amount"] == "5000.00"
+    assert settlement["amount_minor"] == 500000
 
 
 def test_prompt_injected_llm_output_cannot_create_executable_high_value_transfer():

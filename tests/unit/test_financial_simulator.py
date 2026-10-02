@@ -1,16 +1,15 @@
 """End-to-end tests for the FinGuard-controlled local financial simulator."""
 import pytest
 
-from finguard.core.enums import ActorType, Currency, TransactionState
+from finguard.core.enums import ActorType, Currency
 from finguard.core.transaction import Transaction
-from finguard.core.errors import SecurityError
 from finguard.crypto.keystore import Keystore
 from finguard.decision import DecisionEngine
 from finguard.signing import SigningGate
 from finguard.simulator import FinancialSimulator, SimulatorError
 
 
-def _operator_transaction(amount=500.0):
+def _operator_transaction(amount="500.00"):
     return Transaction(
         actor_id="operator-1", from_account="treasury", to_account="vendor-a", amount=amount,
         currency=Currency.INR, initiating_actor_type=ActorType.HUMAN_OPERATOR.value,
@@ -19,19 +18,24 @@ def _operator_transaction(amount=500.0):
 
 def test_only_signed_transaction_can_move_synthetic_money():
     simulator = FinancialSimulator()
-    before = {item["account_id"]: item["balance"] for item in simulator.balances()}
+    before = {item["account_id"]: item["balance_minor"] for item in simulator.balances()}
     result = DecisionEngine().decide(_operator_transaction())
     with pytest.raises(SimulatorError, match="SigningGate-signed"):
         simulator.execute(result.transaction.transaction_id)
+    assert {item["account_id"]: item["balance_minor"] for item in simulator.balances()} == before
 
     Keystore().create_keypair("operator-key", "test-password")
     SigningGate().sign(result.transaction.transaction_id, "operator-key", "test-password")
     settlement = simulator.execute(result.transaction.transaction_id)
-    after = {item["account_id"]: item["balance"] for item in simulator.balances()}
+    after = {item["account_id"]: item["balance_minor"] for item in simulator.balances()}
 
     assert settlement["status"] == "executed"
-    assert after["treasury"] == before["treasury"] - 500.0
-    assert after["vendor-a"] == before["vendor-a"] + 500.0
+    assert result.receipt.amount_minor == 50000
+    assert result.receipt.transaction_hash == result.transaction.transaction_hash()
+    assert after["treasury"] == before["treasury"] - 50000
+    assert after["vendor-a"] == before["vendor-a"] + 50000
+    assert settlement["amount_minor"] == 50000
+    assert sum(after.values()) == sum(before.values())
 
 
 def test_simulator_rejects_replayed_execution():

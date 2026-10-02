@@ -50,10 +50,10 @@ class PolicyEngine:
                 policy_id="default-policy-v1",
                 version=1,
                 description="Default FIN//GUARD system policy",
-                max_amount={"amount": 50000.0},
+                max_amount={"amount": "50000.00"},
                 allowed_destinations=["vendor-a", "vendor-b", "treasury-out", "payroll"],
-                approval={"required_above": 20000.0, "required_approvals": 1},
-                agent={"max_amount": 10000.0, "allowed_destinations": ["vendor-a", "vendor-b"]}
+                approval={"required_above": "20000.00", "required_approvals": 1},
+                agent={"max_amount": "10000.00", "allowed_destinations": ["vendor-a", "vendor-b"]}
             )
         else:
             self.policy = policy
@@ -70,12 +70,24 @@ class PolicyEngine:
         required_approvals = 0
 
         # Check actor authority limit directly from signed identity registry
-        if transaction.amount > actor.authority_limit:
+        from decimal import Decimal
+        from finguard.money import Money
+        currency_str = transaction.currency.value
+        if transaction.currency != actor.authority_currency:
+            final_decision = DecisionType.BLOCK
+            matched_rules.append("IdentityAuthorityCurrencyRule")
+            reasons.append(
+                f"Transaction currency {currency_str} does not match actor authority currency {actor.authority_currency.value}"
+            )
+        limit_minor = Money.from_decimal(
+            actor.authority_limit, actor.authority_currency
+        ).minor_units
+        if transaction.amount_minor > limit_minor:
             final_decision = DecisionType.BLOCK
             matched_rules.append("IdentityAuthorityLimitRule")
             reasons.append(
-                f"Transaction amount ({transaction.currency.value} {transaction.amount:,.2f}) "
-                f"exceeds actor '{actor.actor_id}' authority limit ({transaction.currency.value} {actor.authority_limit:,.2f})"
+                f"Transaction amount ({currency_str} {transaction.money.to_decimal_string()}) "
+                f"exceeds actor '{actor.actor_id}' authority limit ({currency_str} {actor.authority_limit})"
             )
 
         # Check actor allowed destinations from signed registry

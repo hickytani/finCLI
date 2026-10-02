@@ -1,7 +1,7 @@
 """Unit & Integration tests for attack scenario loader and scenario suite."""
 
-import pytest
 from pathlib import Path
+
 from finguard.attacks.scenario_loader import ScenarioLoader
 
 
@@ -45,7 +45,7 @@ steps:
   - action: create_transaction
     from_account: treasury
     to_account: vendor-a
-    amount: 999999.0
+    amount: "999999.00"
     expect: BLOCKED
 """, encoding="utf-8")
 

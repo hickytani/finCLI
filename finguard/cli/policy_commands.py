@@ -55,7 +55,7 @@ def do_policy_test(path: str):
             color = "green" if decision.allowed else ("yellow" if decision.decision_type.value == "require_approval" else "red")
             console.print(Panel(
                 f"Test:               [bold white]{label}[/bold white]\n"
-                f"Amount & Target:    {tx.currency.value} {tx.amount:,.2f} ➔ {tx.to_account}\n"
+                f"Amount & Target:    {tx.currency.value} {tx.money.to_decimal_string()} ➔ {tx.to_account}\n"
                 f"Decision:           [{color}]{decision.decision_type.value.upper()}[/{color}]\n"
                 f"Required Approvals: [bold]{decision.required_approvals}[/bold]\n"
                 f"Explanation:        [dim]{decision.explanation}[/dim]",

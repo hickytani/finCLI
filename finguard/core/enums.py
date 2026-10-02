@@ -24,6 +24,8 @@ class Currency(str, Enum):
     INR = "INR"
     USD = "USD"
     EUR = "EUR"
+    JPY = "JPY"
+    KWD = "KWD"
 
 
 @unique

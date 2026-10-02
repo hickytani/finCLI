@@ -14,6 +14,7 @@ from finguard.attacks.scenario_loader import ScenarioLoader
 from finguard.core.enums import ActorType, Currency, DecisionType
 from finguard.core.errors import SecurityError
 from finguard.core.transaction import Transaction
+from finguard.money import Money
 from finguard.crypto.keystore import Keystore
 from finguard.decision import DecisionEngine
 from finguard.identity.registry import IdentityRegistry
@@ -151,9 +152,9 @@ class RedTeamRunner:
         return FinancialSimulator().balances()
 
     @staticmethod
-    def _balance_delta(before: list[dict], after: list[dict]) -> float:
-        before_map = {(row["account_id"], row["currency"]): row["balance"] for row in before}
-        return sum(abs(row["balance"] - before_map.get((row["account_id"], row["currency"]), row["balance"])) for row in after)
+    def _balance_delta(before: list[dict], after: list[dict]) -> int:
+        before_map = {(row["account_id"], row["currency"]): row["balance_minor"] for row in before}
+        return sum(abs(row["balance_minor"] - before_map.get((row["account_id"], row["currency"]), row["balance_minor"])) for row in after)
 
     def _blocked_result(self, attack_id: str, family: str, reason: str, *, tx_id: str | None = None, before: list[dict] | None = None, signing: str = "not_applicable") -> dict:
         after = self._balances() if before is not None else None
@@ -164,7 +165,7 @@ class RedTeamRunner:
             "signing_status": signing, "balance_before": before, "balance_after": after,
         }
 
-    def _create_pending(self, amount: float = 5000, destination: str = "vendor-a", session_id: str | None = "redteam-session") -> Transaction:
+    def _create_pending(self, amount: str | int = 5000, destination: str = "vendor-a", session_id: str | None = "redteam-session") -> Transaction:
         tx = Transaction(actor_id="treasury-agent", session_id=session_id, from_account="treasury", to_account=destination, amount=amount, currency=Currency.INR, initiating_actor_type=ActorType.AGENT.value)
         result = DecisionEngine().decide(tx)
         if result.decision != DecisionType.REQUIRE_APPROVAL:
@@ -308,8 +309,8 @@ class RedTeamRunner:
         for thread in threads:
             thread.join()
         after = simulator.balances()
-        if outcomes.count("executed") == 1 and outcomes.count("rejected") == 3 and self._balance_delta(before, after) == tx.amount * 2:
-            return {"expected_outcome": "blocked", "actual_outcome": "blocked", "rejection": "three concurrent replays rejected", "funds_status": "observed", "funds_moved": 0, "authorized_movement": tx.amount, "signing_status": "verified", "concurrency": outcomes}
+        if outcomes.count("executed") == 1 and outcomes.count("rejected") == 3 and self._balance_delta(before, after) == tx.amount_minor * 2:
+            return {"expected_outcome": "blocked", "actual_outcome": "blocked", "rejection": "three concurrent replays rejected", "funds_status": "observed", "funds_moved": 0, "authorized_movement_minor": tx.amount_minor, "signing_status": "verified", "concurrency": outcomes}
         return {"expected_outcome": "blocked", "actual_outcome": "allowed", "funds_status": "observed", "funds_moved": self._balance_delta(before, after), "signing_status": "violation", "concurrency": outcomes}
 
     def run_identity_impersonation(self) -> dict:
@@ -345,7 +346,7 @@ class RedTeamRunner:
         self._prepare_keys()
         tx = self._create_pending()
         before = self._balances()
-        tx.amount = 95000
+        tx.amount = Money.from_decimal("95000.00", tx.currency)
         try:
             self._sign(tx)
         except SecurityError as exc:

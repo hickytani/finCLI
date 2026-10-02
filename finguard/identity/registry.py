@@ -12,10 +12,10 @@ import os
 import yaml
 from pathlib import Path
 from typing import Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from finguard.core.config import get_config
-from finguard.core.enums import ActorType
+from finguard.core.enums import ActorType, Currency
 from finguard.core.errors import SecurityError, IntegrityError, KeystoreError
 from finguard.crypto.signing import (
     generate_keypair,
@@ -32,11 +32,21 @@ class ActorConfig(BaseModel):
     actor_id: str
     actor_type: ActorType
     display_name: str
-    authority_limit: float = 10000.0
+    authority_currency: Currency = Currency.INR
+    authority_limit: str = "10000.00"
     allowed_destinations: list[str] = Field(default_factory=list)
+    allowed_source_accounts: list[str] = Field(default_factory=list)
     active: bool = True
     session_binding_required: bool = False
     public_key: Optional[str] = None
+
+    @field_validator("authority_limit", mode="before")
+    @classmethod
+    def exact_authority_limit(cls, value: object, info: ValidationInfo) -> str:
+        from finguard.money import Money
+        exact_text = str(value)
+        Money.from_decimal(exact_text, info.data.get("authority_currency", Currency.INR))
+        return exact_text
 
 
 class IdentityRegistry:
@@ -82,8 +92,9 @@ class IdentityRegistry:
                     "actor_id": "operator-1",
                     "actor_type": ActorType.HUMAN_OPERATOR.value,
                     "display_name": "Primary Operator",
-                    "authority_limit": 1000000.0,
+                    "authority_limit": "1000000.00",
                     "allowed_destinations": ["vendor-a", "vendor-b", "treasury-out", "payroll"],
+                    "allowed_source_accounts": ["*"],
                     "active": True,
                     "session_binding_required": False
                 },
@@ -91,8 +102,9 @@ class IdentityRegistry:
                     "actor_id": "treasury-agent",
                     "actor_type": ActorType.AGENT.value,
                     "display_name": "Autonomous Treasury Agent",
-                    "authority_limit": 10000.0,
+                    "authority_limit": "10000.00",
                     "allowed_destinations": ["vendor-a", "vendor-b"],
+                    "allowed_source_accounts": ["treasury", "acct_treasury"],
                     "active": True,
                     "session_binding_required": True
                 },
@@ -100,8 +112,9 @@ class IdentityRegistry:
                     "actor_id": "approver-1",
                     "actor_type": ActorType.APPROVER.value,
                     "display_name": "Senior Approver",
-                    "authority_limit": 500000.0,
+                    "authority_limit": "500000.00",
                     "allowed_destinations": ["*"],
+                    "allowed_source_accounts": ["*"],
                     "active": True,
                     "session_binding_required": False
                 }
@@ -149,12 +162,22 @@ class IdentityRegistry:
     def _populate_actors(self, data: dict) -> None:
         self._actors.clear()
         for item in data.get("identities", []):
+            legacy_source_accounts = item.get("allowed_source_accounts")
+            if legacy_source_accounts is None:
+                # Backward-compatibility for old registry files created before source-account
+                # restrictions were recorded explicitly. Preserve the legacy behavior
+                # without silently widening new entries: older configs are normalized to
+                # an explicit wildcard so they continue to function as a migration artifact.
+                legacy_source_accounts = ["*"] if item.get("allowed_destinations") else []
+
             actor = ActorConfig(
                 actor_id=item["actor_id"],
                 actor_type=ActorType(item["actor_type"]),
                 display_name=item["display_name"],
-                authority_limit=float(item.get("authority_limit", 10000.0)),
+                authority_currency=Currency(item.get("authority_currency", Currency.INR.value)),
+                authority_limit=str(item.get("authority_limit", "10000.00")),
                 allowed_destinations=item.get("allowed_destinations", []),
+                allowed_source_accounts=legacy_source_accounts,
                 active=item.get("active", True),
                 session_binding_required=item.get("session_binding_required", False),
                 public_key=item.get("public_key")
@@ -202,6 +225,7 @@ class IdentityRegistry:
         updated = False
         new_entry = actor_config.model_dump()
         new_entry["actor_type"] = actor_config.actor_type.value
+        new_entry["authority_currency"] = actor_config.authority_currency.value
 
         for i, item in enumerate(identities):
             if item["actor_id"] == actor_config.actor_id:

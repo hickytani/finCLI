@@ -1,17 +1,14 @@
-"""Executable proof of defects found in the Day-1 baseline (see FINGUARD_AGENT_PROMPT_V2, Appendix A).
+"""Promoted security regression tests for FG-201..FG-206.
 
-Each test is `xfail(strict=True)`: the suite stays green today, but the moment a
-defect is actually fixed the test XPASSes, strict mode turns that into a failure,
-and the fixer must delete the marker. A fix therefore cannot land without the
-proof test being promoted to a normal regression test.
-
-Contract being tested (deliberately implementation-agnostic): a value must either be
-REJECTED at the boundary or be bound EXACTLY by the signed bytes. It may never be
-silently altered between "what is checked/executed" and "what is signed".
+These tests prove that defects FG-201 through FG-206 are permanently fixed:
+- FG-201: Money exactness & canonical v2 signature binding
+- FG-202: NaN boundary rejection
+- FG-203: Deny-by-default Authority
+- FG-205: Minor-unit integer simulator balances
+- FG-206: Bound metadata digest in canonical v2
 """
 
 import datetime
-
 import pytest
 
 from finguard.core.authority import evaluate_authority
@@ -35,57 +32,105 @@ def make_tx(amount, to_account="vendor-a", metadata=None):
     )
 
 
-@pytest.mark.xfail(strict=True, reason="FG-201: canonical_amount rounds to 2dp; distinct amounts share one signed hash")
 def test_distinct_amounts_never_share_a_signed_hash():
     try:
         a, b = make_tx(100.001), make_tx(100.004)
-    except ValueError:
-        return  # rejecting excess precision at the boundary is a valid fix
+    except (ValueError, TypeError):
+        return  # Rejecting excess precision at boundary is a valid fix
     assert a.transaction_hash() != b.transaction_hash()
 
 
-@pytest.mark.xfail(strict=True, reason="FG-201: a positive amount below one cent signs as 0.00")
 def test_positive_amount_never_signs_as_zero():
     try:
         tx = make_tx(0.001)
-    except ValueError:
-        return
-    assert tx.canonical_fields()["amount"] != "0.00"
+    except (ValueError, TypeError):
+        return  # Rejecting excess precision at boundary is a valid fix
+    assert str(tx.canonical_fields()["amount_minor"]) != "0"
 
 
-@pytest.mark.xfail(strict=True, reason="FG-201: signed amount (50000.00) differs from compared/executed amount (50000.004)")
 def test_signed_amount_equals_executed_amount():
     try:
         tx = make_tx(50000.004)
-    except ValueError:
-        return
-    from decimal import Decimal
-
-    assert Decimal(tx.canonical_fields()["amount"]) == Decimal(str(tx.amount))
+    except (ValueError, TypeError):
+        return  # Rejecting excess precision at boundary is a valid fix
+    assert tx.canonical_fields()["amount_minor"] == tx.amount_minor
 
 
-@pytest.mark.xfail(strict=True, reason="FG-202: NaN passes model validation and compares False to every threshold")
 def test_nan_amount_is_rejected_at_the_boundary():
-    with pytest.raises(ValueError):
+    with pytest.raises((ValueError, TypeError)):
         make_tx(float("nan"))
 
 
-@pytest.mark.xfail(strict=True, reason="FG-203: default Authority has empty allowed_destinations, which means ALLOW ALL (fail-open)")
+@pytest.mark.parametrize("hostile", [float("inf"), float("-inf"), float("nan"), 0.001, 500.0, True])
+def test_invalid_numeric_forms_cannot_enter_transaction_boundary(hostile):
+    with pytest.raises((ValueError, TypeError)):
+        make_tx(hostile)
+
+
 def test_default_authority_does_not_allow_arbitrary_destinations():
     actor = Actor(actor_id="agent-1", actor_type=ActorType.AGENT, authority=Authority())
-    decision = evaluate_authority(actor, make_tx(10.0, to_account="attacker-controlled-account"))
+    decision = evaluate_authority(actor, make_tx("10.00", to_account="attacker-controlled-account"))
     assert decision.allowed is False
 
 
-@pytest.mark.xfail(strict=True, reason="FG-205: simulator accounts and transactions store float balances causing precision drift")
+def test_authority_requires_explicit_source_and_action_grants():
+    actor = Actor(
+        actor_id="operator-1",
+        actor_type=ActorType.HUMAN_OPERATOR,
+        authority=Authority(
+            max_transaction_amount="100.00",
+            allowed_destinations=["vendor-a"],
+            allowed_source_accounts=[],
+            allowed_actions=[],
+        ),
+    )
+    decision = evaluate_authority(actor, make_tx("10.00", to_account="vendor-a"))
+    assert decision.allowed is False
+    assert any("source" in reason.lower() for reason in decision.reasons)
+    assert any("action" in reason.lower() for reason in decision.reasons)
+
+
+def test_agent_cannot_use_wildcard_authority():
+    actor = Actor(
+        actor_id="agent-1",
+        actor_type=ActorType.AGENT,
+        authority=Authority(
+            max_transaction_amount="100.00",
+            allowed_destinations=["*"],
+            allowed_source_accounts=["*"],
+            allowed_actions=["*"],
+        ),
+    )
+    decision = evaluate_authority(actor, make_tx("10.00"))
+    assert decision.allowed is False
+    assert any("wildcard" in reason.lower() for reason in decision.reasons)
+    with pytest.raises(ValueError, match="not an account identifier"):
+        make_tx("10.00", to_account="*")
+
+
+def test_operator_wildcard_authority_is_allowed_and_emits_signal():
+    actor = Actor(
+        actor_id="operator-1",
+        actor_type=ActorType.HUMAN_OPERATOR,
+        authority=Authority(
+            max_transaction_amount="100.00",
+            allowed_destinations=["*"],
+            allowed_source_accounts=["*"],
+            allowed_actions=["*"],
+        ),
+    )
+    decision = evaluate_authority(actor, make_tx("10.00"))
+    assert decision.allowed is True
+    assert "WILDCARD_AUTHORITY_USED" in decision.signals
+
+
 def test_simulator_balances_must_not_use_float_arithmetic():
     from finguard.storage.models import SimulatorAccountRecord
-    from sqlalchemy import Column, Float
-    assert not isinstance(SimulatorAccountRecord.balance.type, Float)
+    from sqlalchemy import BigInteger
+    assert isinstance(SimulatorAccountRecord.balance_minor.type, BigInteger)
 
 
-@pytest.mark.xfail(strict=True, reason="FG-206: metadata is excluded from canonical_fields, allowing metadata tampering after signing")
 def test_metadata_must_be_bound_to_transaction_hash():
-    tx1 = make_tx(100.0, metadata={"purpose": "payroll"})
-    tx2 = make_tx(100.0, metadata={"purpose": "ransomware_payment"})
+    tx1 = make_tx("100.00", metadata={"purpose": "payroll"})
+    tx2 = make_tx("100.00", metadata={"purpose": "ransomware_payment"})
     assert tx1.transaction_hash() != tx2.transaction_hash()

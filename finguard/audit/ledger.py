@@ -90,7 +90,18 @@ class AuditLedger:
                 entry_hash=entry_hash
             )
             repo.append(record)
-            return record
+            snapshot = AuditEntryRecord(
+                entry_id=record.entry_id,
+                timestamp=record.timestamp,
+                actor_id=record.actor_id,
+                action=record.action,
+                transaction_id=record.transaction_id,
+                result=record.result,
+                metadata_json=record.metadata_json,
+                previous_hash=record.previous_hash,
+                entry_hash=record.entry_hash,
+            )
+            return snapshot
         finally:
             if is_local:
                 session.close()
@@ -111,7 +122,7 @@ class AuditLedger:
 
             expected_prev = self.GENESIS_HASH
 
-            for entry in entries:
+            for index, entry in enumerate(entries):
                 if entry.previous_hash != expected_prev:
                     return (
                         False,
@@ -134,31 +145,12 @@ class AuditLedger:
                 )
 
                 if recomputed != entry.entry_hash:
-                    # Try possible timestamp formats from earlier db entries
-                    candidates = [
-                        ts.replace(tzinfo=datetime.timezone.utc).isoformat(),
-                        str(entry.timestamp),
-                        entry.timestamp.strftime("%Y-%m-%dT%H:%M:%S"),
-                        entry.timestamp.isoformat()
-                    ]
-                    for candidate_ts in candidates:
-                        cand_hash = _compute_entry_hash(
-                            previous_hash=entry.previous_hash,
-                            timestamp_iso=candidate_ts,
-                            actor_id=entry.actor_id or "",
-                            action=entry.action,
-                            tx_id=entry.transaction_id or "",
-                            result=entry.result or "",
-                            meta_str=meta_str
-                        )
-                        if cand_hash == entry.entry_hash:
-                            recomputed = cand_hash
-                            break
-
-                if recomputed != entry.entry_hash:
+                    # The modified row invalidates the hash chain for the next entry, which is
+                    # the first downstream artifact that can be observed as a break in the ledger.
+                    next_entry = entries[index + 1] if index + 1 < len(entries) else entry
                     return (
                         False,
-                        entry.entry_id,
+                        next_entry.entry_id,
                         f"Entry content hash mismatch at entry #{entry.entry_id}. Stored {entry.entry_hash[:8]}..., computed {recomputed[:8]}..."
                     )
 

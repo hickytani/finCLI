@@ -12,7 +12,7 @@ console = Console()
 
 
 def do_agent_tx_create(
-    from_account: str, to_account: str, amount: float, currency: str = "INR",
+    from_account: str, to_account: str, amount: str, currency: str = "INR",
     actor_id: str = "treasury-agent", session_id: str | None = None,
 ):
     client = FinGuardAgentClient(actor_id=actor_id, session_id=session_id)

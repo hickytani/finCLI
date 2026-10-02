@@ -8,7 +8,7 @@ exist solely for persistence.
 import datetime
 
 from sqlalchemy import (
-    Column, String, Integer, Float, DateTime, Text, Boolean, ForeignKey, Index
+    Column, String, Integer, BigInteger, Float, DateTime, Text, Boolean, ForeignKey, Index
 )
 from sqlalchemy.orm import relationship
 
@@ -39,13 +39,16 @@ class TransactionRecord(Base):
     session_id = Column(String, nullable=True)
     from_account = Column(String, nullable=False)
     to_account = Column(String, nullable=False)
-    amount = Column(Float, nullable=False)
+    amount = Column(Float, nullable=True)  # Non-authoritative Decimal display shadow for legacy schema compatibility.
+    amount_minor = Column(BigInteger, nullable=True)
+    canonical_version = Column(Integer, nullable=False, default=1)
     currency = Column(String, nullable=False)
     nonce = Column(String, nullable=False, unique=True)
     idempotency_key = Column(String, nullable=True, unique=True)
     timestamp = Column(DateTime, nullable=False)
     metadata_json = Column(Text, nullable=True)  # JSON
     state = Column(String, nullable=False, default="created")
+    failure_reason = Column(Text, nullable=True)
     canonical_hash = Column(String, nullable=True)
     signature = Column(String, nullable=True)
     signing_key_id = Column(String, nullable=True)
@@ -174,6 +177,7 @@ class DecisionReceiptRecord(Base):
     receipt_id = Column(String, primary_key=True)
     transaction_id = Column(String, ForeignKey("transactions.transaction_id"), nullable=False)
     transaction_hash = Column(String, nullable=False)
+    canonical_version = Column(Integer, nullable=False, default=1)
     actor_id = Column(String, nullable=True)
     session_id = Column(String, nullable=True)
     policy_id = Column(String, nullable=True)
@@ -212,15 +216,14 @@ class NonceRecord(Base):
 
 
 class SimulatorAccountRecord(Base):
-    """A synthetic account. This table never represents real money."""
+    """A synthetic account storing minor units. This table never represents real money."""
     __tablename__ = "simulator_accounts"
 
     account_id = Column(String, primary_key=True)
     currency = Column(String, nullable=False)
-    balance = Column(Float, nullable=False, default=0.0)
+    balance_minor = Column(BigInteger, nullable=False, default=0)
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
-
 
 class SimulatorExecutionRecord(Base):
     """Exactly one settled simulator movement per FinGuard transaction."""

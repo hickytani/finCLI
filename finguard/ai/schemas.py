@@ -1,6 +1,8 @@
 """Strict, non-authoritative schemas for local model output."""
 from typing import Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from finguard.money import Money
 
 
 class AIAnalysis(BaseModel):
@@ -11,16 +13,23 @@ class AIAnalysis(BaseModel):
 
 
 class TransactionExtraction(BaseModel):
-    amount: float = Field(gt=0, le=10_000_000)
+    amount: str | int = Field()
     currency: Literal["INR", "USD", "EUR"] = "INR"
     destination: str = Field(min_length=1, max_length=128)
     purpose: str = Field(min_length=1, max_length=256)
     analysis: AIAnalysis
 
+    @model_validator(mode="after")
+    def amount_must_be_exact(self) -> "TransactionExtraction":
+        money = Money.from_decimal(self.amount, self.currency)
+        if money.minor_units > 1_000_000_000:
+            raise ValueError("amount exceeds extraction limit")
+        self.amount = money.to_decimal_string()
+        return self
+
     @field_validator("destination")
     @classmethod
     def destination_must_be_explicit(cls, value: str) -> str:
-        # Names such as "Rahul" are ambiguous; FinGuard requires an account ID.
-        if value.strip().lower() in {"unknown", "none", "null", "rahul"}:
+        if value.strip().lower() in {"unknown", "none", "null", "unresolved", "undefined"}:
             raise ValueError("destination is ambiguous or absent")
         return value.strip()

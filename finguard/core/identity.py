@@ -12,14 +12,20 @@ from finguard.core.enums import ActorType, Currency
 
 
 class Authority(BaseModel):
-    """Authority constraints associated with an actor."""
+    """Authority constraints associated with an actor (deny-by-default)."""
 
-    max_transaction_amount: float = Field(default=50000.0)
+    max_transaction_amount: str | int = Field(default="50000.00")
     currency: Currency = Currency.INR
-    allowed_destinations: list[str] = Field(default_factory=list)  # Empty means all destinations allowed unless constrained
+    allowed_destinations: list[str] = Field(default_factory=list)  # Empty list means DENY ALL
+    allowed_source_accounts: list[str] = Field(default_factory=list)
     allowed_actions: list[str] = Field(default_factory=lambda: ["tx:create"])
     roles: list[str] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
+
+    @property
+    def max_transaction_amount_minor(self) -> int:
+        from finguard.money import Money
+        return Money.from_decimal(self.max_transaction_amount, self.currency).minor_units
 
 
 class Actor(BaseModel):

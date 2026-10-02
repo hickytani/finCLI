@@ -81,3 +81,50 @@ class ConfigurationError(FinguardError):
 class TransactionError(FinguardError):
     """Transaction processing error (not necessarily security-related)."""
     pass
+
+
+class ValidationError(FinguardError):
+    """Boundary validation error for hostile or malformed inputs."""
+    pass
+
+
+class MoneyError(ValidationError, ValueError):
+    """Invalid monetary value, excess precision, or forbidden float contamination."""
+    pass
+
+
+class UnsupportedCurrencyError(MoneyError):
+    """Currency is not explicitly supported by the domain."""
+    pass
+
+
+class ExcessPrecisionError(MoneyError):
+    """Amount has more fractional digits than its currency permits."""
+    pass
+
+
+class CanonicalizationError(SecurityError):
+    """Canonical serialization or domain separation failure."""
+    pass
+
+
+__all__ = [
+    "FinguardError",
+    "SecurityError",
+    "AuthorityDeniedError",
+    "PolicyViolationError",
+    "IntegrityError",
+    "ReplayError",
+    "QuorumError",
+    "KeystoreError",
+    "ApprovalError",
+    "AuditIntegrityError",
+    "ConfigurationError",
+    "TransactionError",
+    "ValidationError",
+    "MoneyError",
+    "UnsupportedCurrencyError",
+    "ExcessPrecisionError",
+    "CanonicalizationError",
+]
+

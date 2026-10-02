@@ -12,12 +12,30 @@ def test_identity_registry_bootstrap_and_load(tmp_path: Path):
     op = registry.get_actor("operator-1")
     assert op is not None
     assert op.actor_type == ActorType.HUMAN_OPERATOR
-    assert op.authority_limit == 1000000.0
+    assert op.authority_limit == "1000000.00"
 
     agent = registry.get_actor("treasury-agent")
     assert agent is not None
     assert agent.actor_type == ActorType.AGENT
-    assert agent.authority_limit == 10000.0
+    assert agent.authority_limit == "10000.00"
+    assert agent.allowed_source_accounts == ["treasury", "acct_treasury"]
+
+
+def test_registry_populates_signed_source_account_allowlist(tmp_path: Path):
+    registry = IdentityRegistry(data_dir=tmp_path)
+    registry._populate_actors({
+        "identities": [{
+            "actor_id": "source-limited-agent",
+            "actor_type": ActorType.AGENT.value,
+            "display_name": "Source Limited",
+            "authority_limit": "10000.00",
+            "allowed_destinations": ["vendor-a"],
+            "allowed_source_accounts": ["acct-ops"],
+        }]
+    })
+    actor = registry.get_actor("source-limited-agent")
+    assert actor is not None
+    assert actor.allowed_source_accounts == ["acct-ops"]
 
 
 def test_identity_registry_tamper_detection(tmp_path: Path):
@@ -51,7 +69,7 @@ def test_identity_registry_register_actor(tmp_path: Path):
     # Verify registered
     fetched = registry.get_actor("new-agent")
     assert fetched is not None
-    assert fetched.authority_limit == 5000.0
+    assert fetched.authority_limit == "5000.0"
 
     # Verify signature passes
     registry.load_registry()
