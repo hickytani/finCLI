@@ -48,6 +48,7 @@ class TransactionRecord(Base):
     timestamp = Column(DateTime, nullable=False)
     metadata_json = Column(Text, nullable=True)  # JSON
     state = Column(String, nullable=False, default="created")
+    version = Column(Integer, nullable=False, default=1)
     failure_reason = Column(Text, nullable=True)
     canonical_hash = Column(String, nullable=True)
     signature = Column(String, nullable=True)

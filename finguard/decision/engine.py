@@ -136,6 +136,13 @@ class DecisionEngine:
             # Atomic nonce claim: the UNIQUE constraint is the replay boundary.
             session = get_session()
             try:
+                repo = TransactionRepository(session)
+                if transaction.idempotency_key:
+                    repo._assert_unique_idempotency_key(
+                        transaction.idempotency_key,
+                        transaction.transaction_id,
+                        transaction.transaction_hash(),
+                    )
                 if not ActorRepository(session).get(actor.actor_id):
                     ActorRepository(session).save(ActorRecord(actor_id=actor.actor_id, actor_type=actor.actor_type.value, display_name=actor.display_name, active=actor.active))
                 session.add(TransactionRecord(
@@ -153,6 +160,7 @@ class DecisionEngine:
                     timestamp=transaction.timestamp,
                     metadata_json=json.dumps(transaction.metadata, sort_keys=True) if transaction.metadata else None,
                     state=TransactionState.CREATED.value,
+                    version=1,
                     canonical_hash=transaction.transaction_hash(),
                     policy_version=transaction.policy_version
                 ))
@@ -215,8 +223,12 @@ class DecisionEngine:
         try:
             record = TransactionRepository(session).get(transaction_id)
             if record:
-                record.state = state.value
-                TransactionRepository(session).save(record)
+                if not TransactionRepository(session).compare_and_swap_state(
+                    transaction_id,
+                    expected_version=record.version,
+                    new_state=state,
+                ):
+                    raise ValueError("Transaction state CAS failed")
             elif not tolerate_missing:
                 raise ValueError("Transaction persistence failure")
         finally:

@@ -12,10 +12,10 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
-from sqlalchemy import and_, or_, func
+from sqlalchemy import and_, or_, func, update
 from sqlalchemy.orm import Session
 
-from finguard.core.enums import Currency
+from finguard.core.enums import Currency, TransactionState
 from finguard.core.errors import MoneyError
 from finguard.money import get_currency_exponent
 from finguard.storage.models import (
@@ -61,6 +61,42 @@ class TransactionRepository:
 
     def __init__(self, session: Session):
         self.session = session
+
+    def get_by_idempotency_key(self, idempotency_key: str) -> Optional[TransactionRecord]:
+        if not idempotency_key:
+            return None
+        return (
+            self.session.query(TransactionRecord)
+            .filter(TransactionRecord.idempotency_key == idempotency_key)
+            .one_or_none()
+        )
+
+    def _assert_unique_idempotency_key(self, idempotency_key: str, transaction_id: str, body_hash: str | None = None) -> None:
+        """Reject idempotency-key reuse unless it is the identical request replay."""
+        existing = self.get_by_idempotency_key(idempotency_key)
+        if existing is None:
+            return
+        if existing.transaction_id == transaction_id and (body_hash is None or existing.canonical_hash == body_hash):
+            return
+        raise ValueError(f"reused idempotency key '{idempotency_key}' with a different request payload")
+
+    def compare_and_swap_state(
+        self,
+        transaction_id: str,
+        *,
+        expected_version: int,
+        new_state: str | TransactionState,
+    ) -> bool:
+        """Row-level CAS update: only one worker can win on the expected version."""
+        normalized_state = TransactionState(new_state).value if isinstance(new_state, TransactionState) else str(new_state)
+        result = self.session.execute(
+            update(TransactionRecord)
+            .where(TransactionRecord.transaction_id == transaction_id)
+            .where(TransactionRecord.version == expected_version)
+            .values(state=normalized_state, version=expected_version + 1)
+        )
+        self.session.commit()
+        return result.rowcount == 1
 
     def save(self, record: TransactionRecord) -> None:
         self.session.merge(record)

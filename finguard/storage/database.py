@@ -75,6 +75,7 @@ def init_db() -> None:
         "transactions": {
             "amount_minor": "BIGINT",
             "canonical_version": "INTEGER NOT NULL DEFAULT 1",
+            "version": "INTEGER NOT NULL DEFAULT 1",
             "failure_reason": "TEXT",
         },
         "decision_receipts": {
