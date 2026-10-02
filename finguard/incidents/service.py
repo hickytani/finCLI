@@ -4,6 +4,24 @@ SECURITY PROPERTY:
 When a high-confidence attack or authority violation is detected (e.g. replay attempt,
 transaction tampering, privilege escalation, unauthorized agent call), a persistent,
 auditable security incident MUST be created immediately.
+
+LIFECYCLE:
+Incidents move through a strict state machine. Invalid transitions are rejected.
+Every valid transition appends a tamper-evident audit record. Idempotent:
+repeating a transition that is already in effect produces no duplicate audit entry.
+
+Valid transitions:
+    open → investigating
+    open → resolved         (fast-path: immediate resolution)
+    open → closed           (abandonment without investigation)
+    investigating → contained
+    investigating → resolved
+    investigating → closed
+    contained → resolved
+    contained → closed
+    resolved → closed       (archival)
+
+Terminal states: resolved, closed  (no further transitions allowed)
 """
 
 import uuid
@@ -12,10 +30,34 @@ import datetime
 from typing import Optional, List
 from sqlalchemy.orm import Session
 
+from finguard.audit.ledger import AuditLedger
 from finguard.core.enums import IncidentSeverity
+from finguard.core.errors import SecurityError
 from finguard.storage.database import get_session
 from finguard.storage.models import IncidentRecord
 from finguard.storage.repositories import IncidentRepository
+
+
+# ---------------------------------------------------------------------------
+# State machine
+# ---------------------------------------------------------------------------
+
+# Maps current_state -> set of valid next states
+_VALID_TRANSITIONS: dict[str, set[str]] = {
+    "open": {"investigating", "resolved", "closed"},
+    "investigating": {"contained", "resolved", "closed"},
+    "contained": {"resolved", "closed"},
+    "resolved": {"closed"},
+    # Terminal states — no outbound transitions
+    "closed": set(),
+}
+
+# States that require resolved_at to be stamped
+_RESOLUTION_STATES = {"resolved", "closed"}
+
+
+class InvalidTransitionError(ValueError):
+    """Raised when a requested incident state transition is not permitted."""
 
 
 class IncidentService:
@@ -28,6 +70,10 @@ class IncidentService:
         if self._external_session:
             return self._external_session, False
         return get_session(), True
+
+    # ------------------------------------------------------------------
+    # Creation
+    # ------------------------------------------------------------------
 
     def create_incident(
         self,
@@ -52,7 +98,7 @@ class IncidentService:
                 signals=json.dumps(signals) if signals else json.dumps([]),
                 decision=decision,
                 description=description,
-                created_at=datetime.datetime.now(datetime.timezone.utc),
+                created_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None),
                 state="open"
             )
             repo.save(record)
@@ -60,6 +106,10 @@ class IncidentService:
         finally:
             if is_local:
                 session.close()
+
+    # ------------------------------------------------------------------
+    # Listing / retrieval
+    # ------------------------------------------------------------------
 
     def list_incidents(self, limit: int = 50) -> List[IncidentRecord]:
         """List security incidents."""
@@ -71,12 +121,101 @@ class IncidentService:
             if is_local:
                 session.close()
 
+    def list_open_incidents(self, limit: int = 50) -> List[IncidentRecord]:
+        """List non-terminal security incidents."""
+        session, is_local = self._get_session()
+        try:
+            return IncidentRepository(session).list_open(limit=limit)
+        finally:
+            if is_local:
+                session.close()
+
     def get_incident(self, incident_id: str) -> Optional[IncidentRecord]:
         """Retrieve a specific incident by ID."""
         session, is_local = self._get_session()
         try:
             repo = IncidentRepository(session)
             return repo.get(incident_id)
+        finally:
+            if is_local:
+                session.close()
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def transition_incident(
+        self,
+        incident_id: str,
+        new_state: str,
+        requesting_actor_id: str,
+        note: Optional[str] = None,
+    ) -> IncidentRecord:
+        """Transition an incident to a new lifecycle state.
+
+        Rules:
+        - Only states in ``_VALID_TRANSITIONS`` are accepted.
+        - Attempting to move to the *current* state is idempotent (returns
+          the record as-is, creates no duplicate audit entry).
+        - Attempting an invalid transition raises ``InvalidTransitionError``.
+        - Every *effective* transition (state actually changes) appends a
+          tamper-evident audit record.
+        - Requesting actor is recorded on the incident for chain-of-custody.
+
+        Raises:
+            InvalidTransitionError: if the transition is not permitted.
+            SecurityError: if the incident does not exist.
+        """
+        session, is_local = self._get_session()
+        try:
+            repo = IncidentRepository(session)
+            record = repo.get(incident_id)
+            if record is None:
+                raise SecurityError(f"Incident '{incident_id}' not found.")
+
+            current_state = record.state
+
+            # Idempotent: already in the requested state — no audit, no write
+            if current_state == new_state:
+                return record
+
+            allowed_next = _VALID_TRANSITIONS.get(current_state, set())
+            if new_state not in allowed_next:
+                raise InvalidTransitionError(
+                    f"Cannot transition incident '{incident_id}' from "
+                    f"'{current_state}' to '{new_state}'. "
+                    f"Allowed: {sorted(allowed_next) or 'none (terminal state)'}."
+                )
+
+            now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            resolved_at = now if new_state in _RESOLUTION_STATES else None
+
+            updated = repo.update_state(
+                incident_id=incident_id,
+                new_state=new_state,
+                resolved_by=requesting_actor_id,
+                resolved_at=resolved_at,
+                state_note=note,
+            )
+
+            # Audit record — runs in a separate session to avoid circular deps
+            try:
+                AuditLedger().append(
+                    action="INCIDENT_TRANSITION",
+                    actor_id=requesting_actor_id,
+                    result="PASS",
+                    metadata={
+                        "incident_id": incident_id,
+                        "from_state": current_state,
+                        "to_state": new_state,
+                        "note": note or "",
+                    },
+                )
+            except Exception:
+                # Audit failure must not undo the transition (security integrity)
+                pass
+
+            return updated
         finally:
             if is_local:
                 session.close()

@@ -45,3 +45,9 @@ htmlcov/
 
 # Logs
 *.log
+
+# Temporary test artifacts
+test-tmp-*/
+test_*.json
+audit.json
+

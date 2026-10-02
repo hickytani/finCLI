@@ -140,6 +140,11 @@ class ApprovalService:
             if req.policy_version != str(policy.version) or req.policy_hash != policy_hash:
                 raise SecurityError("Approval request is stale due to policy change.")
 
+            # Check if approver has already approved this transaction/request
+            existing_approvals = appr_repo.get_approvals(transaction_id)
+            if any(a.approver_id == approver.actor_id for a in existing_approvals):
+                raise SecurityError(f"Approver '{approver.actor_id}' has already approved transaction '{transaction_id}'. Duplicate approvals are rejected.")
+
             now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             expires_at = now + datetime.timedelta(minutes=30)
             payload = {

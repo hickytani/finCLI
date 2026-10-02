@@ -7,7 +7,6 @@ SECURITY NOTE: Never log or return raw query exceptions to callers.
 Wrap database errors to prevent information leakage.
 """
 
-import json
 import datetime
 from typing import Optional
 
@@ -18,6 +17,10 @@ from finguard.storage.models import (
     AuditEntryRecord, IncidentRecord, SecuritySignalRecord,
     DecisionReceiptRecord, KeyRecord, NonceRecord,
 )
+
+# Maximum rows any single investigation query may return without explicit override.
+_INVESTIGATION_DEFAULT_LIMIT = 100
+_INVESTIGATION_MAX_LIMIT = 500
 
 
 class TransactionRepository:
@@ -80,6 +83,80 @@ class TransactionRepository:
             .scalar()
         )
         return float(result)
+
+    def search(
+        self,
+        actor_id: Optional[str] = None,
+        state: Optional[str] = None,
+        to_account: Optional[str] = None,
+        from_account: Optional[str] = None,
+        since: Optional[datetime.datetime] = None,
+        until: Optional[datetime.datetime] = None,
+        min_amount: Optional[float] = None,
+        max_amount: Optional[float] = None,
+        offset: int = 0,
+        limit: int = _INVESTIGATION_DEFAULT_LIMIT,
+    ) -> list[TransactionRecord]:
+        """Multi-filter paginated transaction search.
+
+        All filters are additive (AND). Limit is capped at the module maximum
+        to prevent unbounded DB scans. offset/limit provide backend pagination.
+        """
+        limit = min(limit, _INVESTIGATION_MAX_LIMIT)
+        q = self.session.query(TransactionRecord)
+        if actor_id:
+            q = q.filter(TransactionRecord.actor_id == actor_id)
+        if state:
+            q = q.filter(TransactionRecord.state == state)
+        if to_account:
+            q = q.filter(TransactionRecord.to_account == to_account)
+        if from_account:
+            q = q.filter(TransactionRecord.from_account == from_account)
+        if since:
+            q = q.filter(TransactionRecord.timestamp >= since)
+        if until:
+            q = q.filter(TransactionRecord.timestamp <= until)
+        if min_amount is not None:
+            q = q.filter(TransactionRecord.amount >= min_amount)
+        if max_amount is not None:
+            q = q.filter(TransactionRecord.amount <= max_amount)
+        return (
+            q.order_by(TransactionRecord.timestamp.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+    def count_search(
+        self,
+        actor_id: Optional[str] = None,
+        state: Optional[str] = None,
+        to_account: Optional[str] = None,
+        from_account: Optional[str] = None,
+        since: Optional[datetime.datetime] = None,
+        until: Optional[datetime.datetime] = None,
+        min_amount: Optional[float] = None,
+        max_amount: Optional[float] = None,
+    ) -> int:
+        """Count total matching rows for search — used to compute pagination metadata."""
+        q = self.session.query(TransactionRecord)
+        if actor_id:
+            q = q.filter(TransactionRecord.actor_id == actor_id)
+        if state:
+            q = q.filter(TransactionRecord.state == state)
+        if to_account:
+            q = q.filter(TransactionRecord.to_account == to_account)
+        if from_account:
+            q = q.filter(TransactionRecord.from_account == from_account)
+        if since:
+            q = q.filter(TransactionRecord.timestamp >= since)
+        if until:
+            q = q.filter(TransactionRecord.timestamp <= until)
+        if min_amount is not None:
+            q = q.filter(TransactionRecord.amount >= min_amount)
+        if max_amount is not None:
+            q = q.filter(TransactionRecord.amount <= max_amount)
+        return q.count()
 
 
 class ActorRepository:
@@ -186,6 +263,63 @@ class AuditRepository:
             .all()
         )
 
+    def get_by_transaction(
+        self, transaction_id: str, limit: int = _INVESTIGATION_DEFAULT_LIMIT
+    ) -> list[AuditEntryRecord]:
+        """Return audit entries related to a specific transaction, bounded."""
+        return (
+            self.session.query(AuditEntryRecord)
+            .filter(AuditEntryRecord.transaction_id == transaction_id)
+            .order_by(AuditEntryRecord.entry_id.asc())
+            .limit(limit)
+            .all()
+        )
+
+    def get_by_actor(
+        self, actor_id: str, limit: int = _INVESTIGATION_DEFAULT_LIMIT
+    ) -> list[AuditEntryRecord]:
+        """Return recent audit entries for a specific actor, bounded."""
+        limit = min(limit, _INVESTIGATION_MAX_LIMIT)
+        return (
+            self.session.query(AuditEntryRecord)
+            .filter(AuditEntryRecord.actor_id == actor_id)
+            .order_by(AuditEntryRecord.entry_id.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def get_by_action(
+        self, action: str, limit: int = _INVESTIGATION_DEFAULT_LIMIT
+    ) -> list[AuditEntryRecord]:
+        """Return audit entries of a specific action type, bounded."""
+        return (
+            self.session.query(AuditEntryRecord)
+            .filter(AuditEntryRecord.action == action)
+            .order_by(AuditEntryRecord.entry_id.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def get_by_transaction_ids(
+        self,
+        transaction_ids: list[str],
+        limit: int = _INVESTIGATION_DEFAULT_LIMIT,
+    ) -> list[AuditEntryRecord]:
+        """Batch fetch audit entries for a set of transaction IDs.
+
+        Uses an IN query rather than N individual queries. Bounded by limit.
+        """
+        if not transaction_ids:
+            return []
+        limit = min(limit, _INVESTIGATION_MAX_LIMIT)
+        return (
+            self.session.query(AuditEntryRecord)
+            .filter(AuditEntryRecord.transaction_id.in_(transaction_ids))
+            .order_by(AuditEntryRecord.entry_id.asc())
+            .limit(limit)
+            .all()
+        )
+
 
 class IncidentRepository:
     """Data access for security incidents."""
@@ -215,6 +349,59 @@ class IncidentRepository:
             .all()
         )
 
+    def list_by_actor(
+        self, actor_id: str, limit: int = _INVESTIGATION_DEFAULT_LIMIT
+    ) -> list[IncidentRecord]:
+        """Return incidents involving a specific actor, most recent first, bounded."""
+        limit = min(limit, _INVESTIGATION_MAX_LIMIT)
+        return (
+            self.session.query(IncidentRecord)
+            .filter(IncidentRecord.actor_id == actor_id)
+            .order_by(IncidentRecord.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def list_open(self, limit: int = 50) -> list[IncidentRecord]:
+        """Return open (non-terminal) incidents, most recent first, bounded."""
+        return (
+            self.session.query(IncidentRecord)
+            .filter(IncidentRecord.state.in_(["open", "investigating", "contained"]))
+            .order_by(IncidentRecord.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def update_state(
+        self,
+        incident_id: str,
+        new_state: str,
+        resolved_by: Optional[str] = None,
+        resolved_at: Optional[datetime.datetime] = None,
+        state_note: Optional[str] = None,
+    ) -> Optional[IncidentRecord]:
+        """Update incident state in-place. Returns the updated record or None if not found.
+
+        The returned record has all attributes eagerly loaded (expunged from session)
+        so callers may access any attribute without a live session.
+        """
+        record = self.session.get(IncidentRecord, incident_id)
+        if record is None:
+            return None
+        record.state = new_state
+        if resolved_by is not None:
+            record.resolved_by = resolved_by
+        if resolved_at is not None:
+            record.resolved_at = resolved_at
+        if state_note is not None:
+            record.state_note = state_note
+        self.session.commit()
+        # Eagerly load all columns before expunging so the record is usable
+        # without an active session.
+        self.session.refresh(record)
+        self.session.expunge(record)
+        return record
+
 
 class SignalRepository:
     """Data access for security signals."""
@@ -230,6 +417,26 @@ class SignalRepository:
         return (
             self.session.query(SecuritySignalRecord)
             .filter(SecuritySignalRecord.transaction_id == transaction_id)
+            .all()
+        )
+
+    def get_by_transactions(
+        self,
+        transaction_ids: list[str],
+        limit: int = _INVESTIGATION_DEFAULT_LIMIT,
+    ) -> list[SecuritySignalRecord]:
+        """Batch fetch signals for a set of transaction IDs.
+
+        Uses a single IN query instead of N individual queries. Bounded by limit.
+        """
+        if not transaction_ids:
+            return []
+        limit = min(limit, _INVESTIGATION_MAX_LIMIT)
+        return (
+            self.session.query(SecuritySignalRecord)
+            .filter(SecuritySignalRecord.transaction_id.in_(transaction_ids))
+            .order_by(SecuritySignalRecord.created_at.asc())
+            .limit(limit)
             .all()
         )
 
@@ -259,6 +466,26 @@ class ReceiptRepository:
             self.session.query(DecisionReceiptRecord)
             .order_by(DecisionReceiptRecord.timestamp.desc())
             .first()
+        )
+
+    def get_by_transactions(
+        self,
+        transaction_ids: list[str],
+        limit: int = _INVESTIGATION_DEFAULT_LIMIT,
+    ) -> list[DecisionReceiptRecord]:
+        """Batch fetch receipts for a set of transaction IDs.
+
+        Uses a single IN query. Bounded by limit.
+        """
+        if not transaction_ids:
+            return []
+        limit = min(limit, _INVESTIGATION_MAX_LIMIT)
+        return (
+            self.session.query(DecisionReceiptRecord)
+            .filter(DecisionReceiptRecord.transaction_id.in_(transaction_ids))
+            .order_by(DecisionReceiptRecord.timestamp.asc())
+            .limit(limit)
+            .all()
         )
 
 
