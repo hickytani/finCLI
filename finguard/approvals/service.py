@@ -79,14 +79,17 @@ class ApprovalService:
                 policy_hash=policy_hash,
                 created_at=datetime.datetime.now(datetime.timezone.utc)
             )
-            repo.save_request(req)
+            session.add(req)
 
             # Update tx state to PENDING_APPROVAL
             tx_repo = TransactionRepository(session)
             tx_rec = tx_repo.get(transaction.transaction_id)
             if tx_rec:
                 tx_rec.state = TransactionState.PENDING_APPROVAL.value
-                tx_repo.save(tx_rec)
+                tx_repo.save(tx_rec, commit=False)
+
+            if is_local:
+                session.commit()
 
             return req
         finally:
@@ -214,9 +217,7 @@ class ApprovalService:
                     session.rollback()
                     raise SecurityError("Transaction version changed while approval was being recorded.")
             session.add(req)
-            session.commit()
-
-            AuditLedger().append(
+            AuditLedger(session=session).append(
                 "APPROVAL",
                 approver.actor_id,
                 transaction_id,
@@ -229,7 +230,10 @@ class ApprovalService:
                     "approval_payload_hash": approval_record.approval_payload_hash,
                     "key_id": approval_record.signing_key_id,
                 },
+                commit=False,
             )
+            if is_local:
+                session.commit()
 
             return approval_record
         finally:

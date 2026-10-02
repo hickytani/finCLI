@@ -12,7 +12,6 @@ import uuid
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy.exc import IntegrityError as SqlIntegrityError
 
 from finguard.approvals.service import ApprovalService
 from finguard.audit.ledger import AuditLedger
@@ -25,7 +24,12 @@ from finguard.identity.registry import IdentityRegistry
 from finguard.policy.engine import PolicyEngine
 from finguard.risk.engine import RiskEngine
 from finguard.storage.database import get_session
-from finguard.storage.models import ActorRecord, DecisionReceiptRecord, TransactionRecord
+from finguard.storage.models import (
+    ActorRecord,
+    DecisionReceiptRecord,
+    NonceRecord,
+    TransactionRecord,
+)
 from finguard.storage.repositories import (
     ActorRepository,
     ReceiptRepository,
@@ -79,6 +83,10 @@ class DecisionEngine:
         self.policy_engine = policy_engine or PolicyEngine()
 
     @staticmethod
+    def _decision_checkpoint(stage: str) -> None:
+        """Inert checkpoint that tests may replace to simulate a failed decision."""
+
+    @staticmethod
     def _existing_idempotent_result(transaction: Transaction) -> DecisionResult | None:
         if not transaction.idempotency_key:
             return None
@@ -128,7 +136,6 @@ class DecisionEngine:
             return existing_result
 
         actor = None
-        reasons: list[str] = []
         try:
             actor = self.registry.get_actor(transaction.actor_id)
             if not actor:
@@ -139,11 +146,8 @@ class DecisionEngine:
                 raise ValueError("Session binding is required for this identity")
 
             policy_hash = sha256_hash(canonical_serialize(self.policy_engine.policy.model_dump(mode="json")))
-            from decimal import Decimal
-
             from finguard.money import Money
             _authority_currency = actor.authority_currency
-            _currency_str = transaction.currency.value
             _limit_minor = Money.from_decimal(
                 actor.authority_limit, _authority_currency
             ).minor_units
@@ -186,108 +190,132 @@ class DecisionEngine:
             if authority_allowed and not authority_reasons:
                 authority_reasons.append("Authority checks passed")
 
-            # Atomic nonce claim: the UNIQUE constraint is the replay boundary.
             session = get_session()
             try:
-                repo = TransactionRepository(session)
-                if transaction.idempotency_key:
-                    repo._assert_unique_idempotency_key(
-                        transaction.idempotency_key,
-                        transaction.transaction_id,
-                        transaction.transaction_hash(),
+                with session.begin():
+                    repo = TransactionRepository(session)
+                    if transaction.idempotency_key:
+                        repo._assert_unique_idempotency_key(
+                            transaction.idempotency_key,
+                            transaction.transaction_id,
+                            transaction.transaction_hash(),
+                        )
+                    if not ActorRepository(session).get(actor.actor_id):
+                        session.add(ActorRecord(
+                            actor_id=actor.actor_id,
+                            actor_type=actor.actor_type.value,
+                            display_name=actor.display_name,
+                            active=actor.active,
+                        ))
+                    record = TransactionRecord(
+                        transaction_id=transaction.transaction_id,
+                        actor_id=transaction.actor_id,
+                        session_id=transaction.session_id,
+                        from_account=transaction.from_account,
+                        to_account=transaction.to_account,
+                        amount=transaction.money.to_decimal_string(),
+                        amount_minor=transaction.amount_minor,
+                        canonical_version=2,
+                        currency=transaction.currency.value,
+                        nonce=transaction.nonce,
+                        idempotency_key=transaction.idempotency_key,
+                        timestamp=transaction.timestamp,
+                        metadata_json=json.dumps(transaction.metadata, sort_keys=True) if transaction.metadata else None,
+                        state=TransactionState.CREATED.value,
+                        version=1,
+                        canonical_hash=transaction.transaction_hash(),
+                        policy_version=transaction.policy_version,
                     )
-                if not ActorRepository(session).get(actor.actor_id):
-                    ActorRepository(session).save(ActorRecord(actor_id=actor.actor_id, actor_type=actor.actor_type.value, display_name=actor.display_name, active=actor.active))
-                session.add(TransactionRecord(
-                    transaction_id=transaction.transaction_id,
-                    actor_id=transaction.actor_id,
-                    session_id=transaction.session_id,
-                    from_account=transaction.from_account,
-                    to_account=transaction.to_account,
-                    amount=Decimal(transaction.money.to_decimal_string()),
-                    amount_minor=transaction.amount_minor,
-                    canonical_version=2,
-                    currency=transaction.currency.value,
-                    nonce=transaction.nonce,
-                    idempotency_key=transaction.idempotency_key,
-                    timestamp=transaction.timestamp,
-                    metadata_json=json.dumps(transaction.metadata, sort_keys=True) if transaction.metadata else None,
-                    state=TransactionState.CREATED.value,
-                    version=1,
-                    canonical_hash=transaction.transaction_hash(),
-                    policy_version=transaction.policy_version
-                ))
-                session.add(__import__("finguard.storage.models", fromlist=["NonceRecord"]).NonceRecord(nonce=transaction.nonce, transaction_id=transaction.transaction_id))
-                session.commit()
-            except SqlIntegrityError as exc:
-                session.rollback()
-                raise ValueError("Replay or persistence integrity violation") from exc
+                    session.add(record)
+                    session.add(NonceRecord(nonce=transaction.nonce, transaction_id=transaction.transaction_id))
+
+                    self._decision_checkpoint("after_validation")
+                    risk = RiskEngine(session=session).analyze(transaction, actor)
+                    policy = self.policy_engine.evaluate(transaction, actor, risk.model_dump())
+                    decision = DecisionType.BLOCK if not authority_allowed else policy.decision_type
+                    if decision == DecisionType.BLOCK and actor.actor_type != ActorType.AGENT and self.policy_engine.policy.approval:
+                        threshold_minor = Money.from_decimal(
+                            self.policy_engine.policy.approval.required_above,
+                            self.policy_engine.policy.approval.currency.value,
+                        ).minor_units
+                        if transaction.amount_minor > threshold_minor and transaction.amount_minor <= _limit_minor:
+                            decision = DecisionType.REQUIRE_APPROVAL
+                            policy = policy.model_copy(update={
+                                "decision_type": DecisionType.REQUIRE_APPROVAL,
+                                "required_approvals": self.policy_engine.policy.approval.required_approvals,
+                                "reasons": [*policy.reasons, f"Transaction amount ({transaction.currency.value} {transaction.money.to_decimal_string()}) exceeds approval threshold ({self.policy_engine.policy.approval.currency.value} {self.policy_engine.policy.approval.required_above})"],
+                                "matched_rules": [*policy.matched_rules, "DecisionEngineApprovalOverride"],
+                            })
+                    reasons = authority_reasons + policy.reasons
+                    state = {
+                        DecisionType.BLOCK: TransactionState.BLOCKED,
+                        DecisionType.REQUIRE_APPROVAL: TransactionState.PENDING_APPROVAL,
+                        DecisionType.ALLOW: TransactionState.CREATED,
+                    }[decision]
+                    TransactionStateMachine.validate_transition(transaction.state, state)
+                    transaction.transition_to(state)
+                    approval_state = "not_required"
+                    if decision == DecisionType.REQUIRE_APPROVAL:
+                        ApprovalService(session=session).create_approval_request(
+                            transaction, policy.required_approvals, transaction.actor_id
+                        )
+                        approval_state = "pending"
+                    if not repo.compare_and_swap_state(
+                        transaction.transaction_id,
+                        expected_version=1,
+                        new_state=state,
+                        commit=False,
+                    ):
+                        raise ValueError("Transaction state CAS failed")
+                    transaction.revision = 2
+                    receipt = DecisionReceipt(
+                        transaction_id=transaction.transaction_id,
+                        canonical_version=2,
+                        transaction_version=transaction.revision,
+                        transaction_hash=transaction.transaction_hash(),
+                        actor_id=actor.actor_id,
+                        actor_type=actor.actor_type.value,
+                        amount=transaction.money.to_decimal_string(),
+                        amount_minor=transaction.amount_minor,
+                        currency=transaction.currency.value,
+                        destination=transaction.to_account,
+                        authority_allowed=authority_allowed,
+                        authority_reasons=authority_reasons,
+                        policy_id=policy.policy_id,
+                        policy_version=str(policy.policy_version),
+                        policy_hash=policy_hash,
+                        deterministic_risk=risk.model_dump(mode="json"),
+                        ai_assessment=ai_assessment or {"status": "NOT_PROVIDED"},
+                        approval_requirement=policy.required_approvals,
+                        approval_state=approval_state,
+                        final_decision=decision.value,
+                        reasons=reasons,
+                    )
+                    self._decision_checkpoint("after_lifecycle_transition")
+                    self._persist_receipt(receipt, session)
+                    self._decision_checkpoint("after_receipt_evidence")
+                    AuditLedger(session=session).append(
+                        "DECISION",
+                        transaction.actor_id,
+                        transaction.transaction_id,
+                        receipt.final_decision.upper(),
+                        {
+                            "receipt_id": receipt.receipt_id,
+                            "receipt_hash": receipt.receipt_hash(),
+                            "transaction_hash": receipt.transaction_hash,
+                            "transaction_version": receipt.transaction_version,
+                            "policy_version": receipt.policy_version,
+                            "reasons": receipt.reasons,
+                        },
+                        commit=False,
+                    )
+                    self._decision_checkpoint("before_commit")
             finally:
                 session.close()
-
-            risk = RiskEngine().analyze(transaction, actor)
-            policy = self.policy_engine.evaluate(transaction, actor, risk.model_dump())
-            decision = DecisionType.BLOCK if not authority_allowed else policy.decision_type
-            if decision == DecisionType.BLOCK and actor.actor_type != ActorType.AGENT and self.policy_engine.policy.approval:
-                from finguard.money import Money
-                threshold_minor = Money.from_decimal(self.policy_engine.policy.approval.required_above, self.policy_engine.policy.approval.currency.value).minor_units
-                limit_minor = Money.from_decimal(actor.authority_limit, actor.authority_currency).minor_units
-                if transaction.amount_minor > threshold_minor and transaction.amount_minor <= limit_minor:
-                    decision = DecisionType.REQUIRE_APPROVAL
-                    policy = policy.model_copy(update={
-                        "decision_type": DecisionType.REQUIRE_APPROVAL,
-                        "required_approvals": self.policy_engine.policy.approval.required_approvals,
-                        "reasons": [*policy.reasons, f"Transaction amount ({transaction.currency.value} {transaction.money.to_decimal_string()}) exceeds approval threshold ({self.policy_engine.policy.approval.currency.value} {self.policy_engine.policy.approval.required_above})"],
-                        "matched_rules": [*policy.matched_rules, "DecisionEngineApprovalOverride"],
-                    })
-            reasons = authority_reasons + policy.reasons
-            state = {DecisionType.BLOCK: TransactionState.BLOCKED, DecisionType.REQUIRE_APPROVAL: TransactionState.PENDING_APPROVAL, DecisionType.ALLOW: TransactionState.CREATED}[decision]
-            TransactionStateMachine.validate_transition(transaction.state, state)
-            transaction.transition_to(state)
-            approval_state = "not_required"
-            if decision == DecisionType.REQUIRE_APPROVAL:
-                ApprovalService().create_approval_request(transaction, policy.required_approvals, transaction.actor_id)
-                approval_state = "pending"
-            persisted_version = self._set_state(transaction.transaction_id, state)
-            if persisted_version is not None:
-                transaction.revision = persisted_version
-            receipt = DecisionReceipt(transaction_id=transaction.transaction_id, canonical_version=2, transaction_version=transaction.revision, transaction_hash=transaction.transaction_hash(), actor_id=actor.actor_id, actor_type=actor.actor_type.value, amount=transaction.money.to_decimal_string(), amount_minor=transaction.amount_minor, currency=transaction.currency.value, destination=transaction.to_account, authority_allowed=authority_allowed, authority_reasons=authority_reasons, policy_id=policy.policy_id, policy_version=str(policy.policy_version), policy_hash=policy_hash, deterministic_risk=risk.model_dump(mode="json"), ai_assessment=ai_assessment or {"status": "NOT_PROVIDED"}, approval_requirement=policy.required_approvals, approval_state=approval_state, final_decision=decision.value, reasons=reasons)
         except Exception as exc:
-            # Never convert an exception to ALLOW. A receipt is still emitted where possible.
             transaction.state = TransactionState.BLOCKED
             reason = f"FAIL_CLOSED: {type(exc).__name__}: {exc}"
             receipt = DecisionReceipt(transaction_id=transaction.transaction_id, canonical_version=2, transaction_hash=transaction.transaction_hash(), actor_id=transaction.actor_id, actor_type=actor.actor_type.value if actor else None, amount=transaction.money.to_decimal_string(), amount_minor=transaction.amount_minor, currency=transaction.currency.value, destination=transaction.to_account, authority_allowed=False, authority_reasons=[reason], policy_integrity="UNKNOWN", ai_assessment=ai_assessment or {"status": "NOT_PROVIDED"}, final_decision=DecisionType.BLOCK.value, reasons=[reason])
-            decision = DecisionType.BLOCK
-            persisted_version = self._set_state(
-                transaction.transaction_id,
-                TransactionState.BLOCKED,
-                tolerate_missing=True,
-            )
-            if persisted_version is not None:
-                transaction.revision = persisted_version
-        # Unknown identities cannot satisfy the receipt table's transaction FK;
-        # audit still records the attempted decision without inventing an actor.
-        try:
-            self._persist_receipt(receipt)
-        except Exception:
-            decision = DecisionType.BLOCK
-        try:
-            AuditLedger().append(
-                "DECISION",
-                transaction.actor_id,
-                transaction.transaction_id,
-                receipt.final_decision.upper(),
-                {
-                    "receipt_id": receipt.receipt_id,
-                    "receipt_hash": receipt.receipt_hash(),
-                    "transaction_hash": receipt.transaction_hash,
-                    "transaction_version": receipt.transaction_version,
-                    "policy_version": receipt.policy_version,
-                    "reasons": receipt.reasons,
-                },
-            )
-        except Exception:
-            # Audit is evidence-bearing: retain fail-closed decision even if the evidence store failed.
             decision = DecisionType.BLOCK
         return DecisionResult(decision=decision, transaction=transaction, receipt=receipt)
 
@@ -316,10 +344,6 @@ class DecisionEngine:
             session.close()
 
     @staticmethod
-    def _persist_receipt(receipt: DecisionReceipt) -> None:
-        session = get_session()
-        try:
-            latest = ReceiptRepository(session).get_latest()
-            ReceiptRepository(session).save(DecisionReceiptRecord(receipt_id=receipt.receipt_id, transaction_id=receipt.transaction_id, transaction_hash=receipt.transaction_hash, transaction_version=receipt.transaction_version, canonical_version=receipt.canonical_version, actor_id=receipt.actor_id, policy_id=receipt.policy_id, policy_version=receipt.policy_version, matched_rules=json.dumps(receipt.reasons), security_signals=json.dumps(receipt.deterministic_risk), risk_score=receipt.deterministic_risk.get("risk_score"), risk_level=receipt.deterministic_risk.get("risk_level"), approval_state=receipt.approval_state, decision=receipt.final_decision, reason=json.dumps(receipt.model_dump(mode="json"), sort_keys=True), timestamp=receipt.timestamp.replace(tzinfo=None), previous_receipt_hash=latest.receipt_hash if latest else None, receipt_hash=receipt.receipt_hash()))
-        finally:
-            session.close()
+    def _persist_receipt(receipt: DecisionReceipt, session) -> None:
+        latest = ReceiptRepository(session).get_latest()
+        session.add(DecisionReceiptRecord(receipt_id=receipt.receipt_id, transaction_id=receipt.transaction_id, transaction_hash=receipt.transaction_hash, transaction_version=receipt.transaction_version, canonical_version=receipt.canonical_version, actor_id=receipt.actor_id, policy_id=receipt.policy_id, policy_version=receipt.policy_version, matched_rules=json.dumps(receipt.reasons), security_signals=json.dumps(receipt.deterministic_risk), risk_score=receipt.deterministic_risk.get("risk_score"), risk_level=receipt.deterministic_risk.get("risk_level"), approval_state=receipt.approval_state, decision=receipt.final_decision, reason=json.dumps(receipt.model_dump(mode="json"), sort_keys=True), timestamp=receipt.timestamp.replace(tzinfo=None), previous_receipt_hash=latest.receipt_hash if latest else None, receipt_hash=receipt.receipt_hash()))

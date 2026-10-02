@@ -52,7 +52,9 @@ class AuditLedger:
         actor_id: str = "system",
         transaction_id: Optional[str] = None,
         result: str = "PASS",
-        metadata: Optional[dict] = None
+        metadata: Optional[dict] = None,
+        *,
+        commit: bool = True,
     ) -> AuditEntryRecord:
         """Append a new audit entry with hash chaining to the ledger."""
         session, is_local = self._get_session()
@@ -89,7 +91,7 @@ class AuditLedger:
                 previous_hash=prev_hash,
                 entry_hash=entry_hash
             )
-            repo.append(record)
+            repo.append(record, commit=commit)
             snapshot = AuditEntryRecord(
                 entry_id=record.entry_id,
                 timestamp=record.timestamp,

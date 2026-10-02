@@ -35,6 +35,10 @@ class SimulatorError(SecurityError):
     """A refused synthetic settlement; no money movement occurred."""
 
 
+def _execution_checkpoint(stage: str) -> None:
+    """Inert checkpoint that tests may replace to simulate a process failure."""
+
+
 class FinancialSimulator:
     """Settlement boundary for virtual INR accounts, never a real payment rail."""
 
@@ -187,78 +191,155 @@ class FinancialSimulator:
         self.bootstrap()
         session = get_session()
         try:
-            record = TransactionRepository(session).get(transaction_id)
-            if not record:
-                raise SimulatorError("Transaction not found")
-            if record.state != TransactionState.SIGNED.value:
-                raise SimulatorError("Only a SigningGate-signed transaction may execute")
-            TransactionStateMachine.validate_transition(record.state, TransactionState.EXECUTED)
-            if record.signed_version is None or record.version != record.signed_version:
-                raise SimulatorError("Signed transaction version is stale")
-            if record.canonical_version != 2:
-                raise SimulatorError("Legacy transaction cannot be executed")
-            if session.query(SimulatorExecutionRecord).filter_by(transaction_id=transaction_id).first():
-                raise SimulatorError("Transaction was already executed")
-            if not record.signature or not record.signing_key_id:
-                raise SimulatorError("Signed transaction is missing signature evidence")
+            with session.begin():
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                record = TransactionRepository(session).get(transaction_id)
+                if not record:
+                    raise SimulatorError("Transaction not found")
+                execution = session.query(SimulatorExecutionRecord).filter_by(
+                    transaction_id=transaction_id
+                ).first()
+                if record.state == TransactionState.EXECUTED.value:
+                    if (
+                        execution is None
+                        or execution.transaction_hash != record.canonical_hash
+                        or execution.signature != record.signature
+                    ):
+                        raise SimulatorError("Executed transaction evidence is inconsistent")
+                    replay_result = self._execution_result(record, execution)
+                    execution_entries = [
+                        entry
+                        for entry in AuditRepository(session).get_by_transaction(transaction_id)
+                        if entry.action == "SIMULATOR_EXECUTE"
+                    ]
+                    expected_evidence = {
+                        key: replay_result[key]
+                        for key in (
+                            "transaction_hash", "source", "destination", "amount", "amount_minor", "currency"
+                        )
+                    }
+                    if (
+                        len(execution_entries) != 1
+                        or execution_entries[0].actor_id != record.actor_id
+                        or execution_entries[0].result != "EXECUTED"
+                        or json.loads(execution_entries[0].metadata_json or "{}") != expected_evidence
+                    ):
+                        raise SimulatorError("Executed transaction audit evidence is inconsistent")
+                    return replay_result
+                if record.state != TransactionState.SIGNED.value:
+                    raise SimulatorError("Only a SigningGate-signed transaction may execute")
+                TransactionStateMachine.validate_transition(record.state, TransactionState.EXECUTED)
+                if record.signed_version is None or record.version != record.signed_version:
+                    raise SimulatorError("Signed transaction version is stale")
+                if record.canonical_version != 2:
+                    raise SimulatorError("Legacy transaction cannot be executed")
+                if execution:
+                    raise SimulatorError("Transaction execution evidence is inconsistent")
+                if not record.signature or not record.signing_key_id:
+                    raise SimulatorError("Signed transaction is missing signature evidence")
 
-            if record.amount_minor is None:
-                raise SimulatorError("Legacy transaction must be resubmitted before execution")
-            from finguard.money import Money
-            tx = Transaction(
-                transaction_id=record.transaction_id, actor_id=record.actor_id, session_id=record.session_id,
-                from_account=record.from_account, to_account=record.to_account,
-                amount=Money(minor_units=record.amount_minor, currency=record.currency),
-                currency=Currency(record.currency), nonce=record.nonce, timestamp=record.timestamp,
-                metadata=json.loads(record.metadata_json) if record.metadata_json else None,
-                idempotency_key=record.idempotency_key, policy_version=record.policy_version,
-                state=TransactionState(record.state), revision=record.signed_version - 1,
-            )
-            if record.canonical_hash != tx.transaction_hash():
-                raise SimulatorError("Stored transaction no longer matches its canonical authorization hash")
-            self._verify_authority_evidence(session, record, tx)
-            try:
-                verify_signature(tx.canonical_bytes(), record.signature, bytes.fromhex(Keystore().get_public_key(record.signing_key_id)))
-            except Exception as exc:
-                raise SimulatorError("Transaction signature is invalid") from exc
+                if record.amount_minor is None:
+                    raise SimulatorError("Legacy transaction must be resubmitted before execution")
+                from finguard.money import Money
+                tx = Transaction(
+                    transaction_id=record.transaction_id, actor_id=record.actor_id, session_id=record.session_id,
+                    from_account=record.from_account, to_account=record.to_account,
+                    amount=Money(minor_units=record.amount_minor, currency=record.currency),
+                    currency=Currency(record.currency), nonce=record.nonce, timestamp=record.timestamp,
+                    metadata=json.loads(record.metadata_json) if record.metadata_json else None,
+                    idempotency_key=record.idempotency_key, policy_version=record.policy_version,
+                    state=TransactionState(record.state), revision=record.signed_version - 1,
+                )
+                if record.canonical_hash != tx.transaction_hash():
+                    raise SimulatorError("Stored transaction no longer matches its canonical authorization hash")
+                self._verify_authority_evidence(session, record, tx)
+                try:
+                    verify_signature(tx.canonical_bytes(), record.signature, bytes.fromhex(Keystore().get_public_key(record.signing_key_id)))
+                except Exception as exc:
+                    raise SimulatorError("Transaction signature is invalid") from exc
+                _execution_checkpoint("after_validation")
 
-            debit = session.execute(
-                update(SimulatorAccountRecord)
-                .where(SimulatorAccountRecord.account_id == tx.from_account, SimulatorAccountRecord.currency == tx.currency.value,
-                       SimulatorAccountRecord.active.is_(True), SimulatorAccountRecord.balance_minor >= tx.amount_minor)
-                .values(balance_minor=SimulatorAccountRecord.balance_minor - tx.amount_minor)
-            )
-            if debit.rowcount != 1:
-                session.rollback()
-                raise SimulatorError("Source account is unavailable or has insufficient synthetic funds")
-            credit = session.execute(
-                update(SimulatorAccountRecord)
-                .where(SimulatorAccountRecord.account_id == tx.to_account, SimulatorAccountRecord.currency == tx.currency.value,
-                       SimulatorAccountRecord.active.is_(True))
-                .values(balance_minor=SimulatorAccountRecord.balance_minor + tx.amount_minor)
-            )
-            if credit.rowcount != 1:
-                session.rollback()
-                raise SimulatorError("Destination account is unavailable or currency-incompatible")
-            session.add(SimulatorExecutionRecord(
-                execution_id=f"SIM-{uuid.uuid4().hex[:12].upper()}", transaction_id=tx.transaction_id,
-                transaction_hash=tx.transaction_hash(), signature=record.signature,
-            ))
-            if not TransactionRepository(session).compare_and_swap_state(
-                transaction_id,
-                expected_version=record.version,
-                new_state=TransactionState.EXECUTED,
-                commit=False,
-            ):
-                session.rollback()
-                raise SimulatorError("Transaction changed during execution; settlement was rejected")
-            session.commit()
+                debit = session.execute(
+                    update(SimulatorAccountRecord)
+                    .where(SimulatorAccountRecord.account_id == tx.from_account, SimulatorAccountRecord.currency == tx.currency.value,
+                           SimulatorAccountRecord.active.is_(True), SimulatorAccountRecord.balance_minor >= tx.amount_minor)
+                    .values(balance_minor=SimulatorAccountRecord.balance_minor - tx.amount_minor)
+                )
+                if debit.rowcount != 1:
+                    raise SimulatorError("Source account is unavailable or has insufficient synthetic funds")
+                credit = session.execute(
+                    update(SimulatorAccountRecord)
+                    .where(SimulatorAccountRecord.account_id == tx.to_account, SimulatorAccountRecord.currency == tx.currency.value,
+                           SimulatorAccountRecord.active.is_(True))
+                    .values(balance_minor=SimulatorAccountRecord.balance_minor + tx.amount_minor)
+                )
+                if credit.rowcount != 1:
+                    raise SimulatorError("Destination account is unavailable or currency-incompatible")
+                _execution_checkpoint("after_financial_mutation")
+
+                execution = SimulatorExecutionRecord(
+                    execution_id=f"SIM-{uuid.uuid4().hex[:12].upper()}", transaction_id=tx.transaction_id,
+                    transaction_hash=tx.transaction_hash(), signature=record.signature,
+                )
+                session.add(execution)
+                session.flush()
+                _execution_checkpoint("after_execution_record")
+                if not TransactionRepository(session).compare_and_swap_state(
+                    transaction_id,
+                    expected_version=record.version,
+                    new_state=TransactionState.EXECUTED,
+                    commit=False,
+                ):
+                    raise SimulatorError("Transaction changed during execution; settlement was rejected")
+                _execution_checkpoint("after_lifecycle_transition")
+
+                evidence = self._execution_evidence(tx)
+                AuditLedger(session=session).append(
+                    "SIMULATOR_EXECUTE", tx.actor_id, tx.transaction_id, "EXECUTED", evidence, commit=False
+                )
+                _execution_checkpoint("after_receipt_evidence")
+                _execution_checkpoint("before_commit")
         except (SqlIntegrityError, OperationalError) as exc:
             session.rollback()
             raise SimulatorError("Concurrent or replayed execution was rejected") from exc
         finally:
             session.close()
 
-        evidence = {"transaction_hash": tx.transaction_hash(), "source": tx.from_account, "destination": tx.to_account, "amount": tx.money.to_decimal_string(), "amount_minor": tx.amount_minor, "currency": tx.currency.value}
-        AuditLedger().append("SIMULATOR_EXECUTE", tx.actor_id, tx.transaction_id, "EXECUTED", evidence)
         return {"status": "executed", "transaction_id": tx.transaction_id, **evidence}
+
+    @staticmethod
+    def _execution_evidence(transaction: Transaction) -> dict:
+        return {
+            "transaction_hash": transaction.transaction_hash(),
+            "source": transaction.from_account,
+            "destination": transaction.to_account,
+            "amount": transaction.money.to_decimal_string(),
+            "amount_minor": transaction.amount_minor,
+            "currency": transaction.currency.value,
+        }
+
+    @classmethod
+    def _execution_result(cls, record, execution: SimulatorExecutionRecord) -> dict:
+        from finguard.money import Money
+
+        transaction = Transaction(
+            transaction_id=record.transaction_id,
+            actor_id=record.actor_id,
+            session_id=record.session_id,
+            from_account=record.from_account,
+            to_account=record.to_account,
+            amount=Money(minor_units=record.amount_minor, currency=record.currency),
+            currency=Currency(record.currency),
+            nonce=record.nonce,
+            timestamp=record.timestamp,
+            metadata=json.loads(record.metadata_json) if record.metadata_json else None,
+            idempotency_key=record.idempotency_key,
+            policy_version=record.policy_version,
+        )
+        if execution.transaction_hash != transaction.transaction_hash():
+            raise SimulatorError("Executed transaction hash is inconsistent")
+        return {
+            "status": "executed",
+            "transaction_id": record.transaction_id,
+            **cls._execution_evidence(transaction),
+        }

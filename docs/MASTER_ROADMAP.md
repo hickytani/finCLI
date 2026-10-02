@@ -1,9 +1,8 @@
 # FIN//GUARD Master Architecture and Roadmap
 
-**State snapshot:** 2026-10-02, branch `m1-money`, source tree in the current
-worktree. This describes observed code and tests, not historical reports or
-intended architecture. The worktree is uncommitted; no release approval is
-implied.
+**State snapshot:** 2026-10-02, branch `m1-money`, baseline commit `4a8461f`
+with uncommitted M2.2 changes. This describes observed code and tests, not
+historical reports or intended architecture. No release approval is implied.
 
 ## Repository Baseline
 
@@ -11,14 +10,14 @@ implied.
   3.13.7. Runtime stack: Typer/Rich, Pydantic 2, SQLAlchemy 2/SQLite,
   cryptography/PyNaCl, argon2-cffi, networkx, PyYAML. Test tooling: pytest,
   pytest-cov/Hypothesis in dev extras, Ruff in dev extras.
-- Git checkpoint: `m1-money` at `9bde6ca`, same as `origin/m1-money`; M2.1
-  authority-chain changes are uncommitted. Remote is
-  `https://github.com/hickytani/finCLI.git`.
+- Git checkpoint: `m1-money` at `4a8461f`, same as `origin/m1-money`; M2.2
+  atomicity changes are currently uncommitted.
 - Pre-M2.1 baseline with preserved idempotency changes: **196 passed, 0 failed**.
-  Current full-suite run after M2.1 changes: **207 passed, 0 failed** in 41.61s.
+  Final full-suite run after M2.2 changes: **221 passed, 0 failed** in 51.37s.
   SQLAlchemy `datetime.utcnow()` deprecation warnings remain.
 - Focused authority-chain, simulator, signing, approval, attack and migration
-  slices passed. Threaded signing and execution races each prove one winner.
+  slices passed. Threaded and spawned-process signing races prove one stored
+  signature; threaded/process execution races prove one financial effect.
 - Final isolated benchmark: decision N=1000 p50 7.117 ms, p95 9.711 ms,
   p99 12.857 ms, 133.57 ops/s; Money parse/format p95 0.0021 ms; canonical hash
   p95 0.0165 ms; Ed25519 sign p95 0.0377 ms; ledger 200-entry verify 11.678 ms.
@@ -51,13 +50,20 @@ flowchart TD
     Simulator --> Ledger
 ```
 
-The flow is split across modules and multiple SQLite sessions. Signing and
-execution state changes use row-level CAS; simulator balances, execution record,
-and `SIGNED -> EXECUTED` CAS share one SQLite transaction. Decision, nonce,
-receipt, and decision audit append do not share one atomic unit; approval/signing
-audit appends also follow their database commits. There is no product
-`finguard.mcp` server. `tools/devtools_mcp.py` is an engineering helper and is
-not the financial-action boundary.
+High-level decision, approval, signing, and simulator execution writes use
+explicit SQLite transactions with their required database evidence. Decision
+records, nonce, approval request when needed, lifecycle CAS, receipt, and DECISION
+audit append share one session. Approval state and audit evidence share a
+transaction; signing CAS/signature and signing evidence share a transaction.
+Simulator debit/credit, unique execution record, lifecycle CAS, and execution
+audit evidence also commit together. Execution alone acquires SQLite's writer
+reservation with `BEGIN IMMEDIATE` before its read/validate/write sequence, with
+an explicit 5000 ms `busy_timeout`; this is limited to the simulator boundary.
+Deterministic test checkpoints prove rollback/retry, and thread plus spawned
+process tests use independent sessions/processes. Forced process death during
+commit remains untested. There is no product `finguard.mcp` server;
+`tools/devtools_mcp.py` is an engineering helper, not the financial-action
+boundary.
 
 | Component | Current inputs/outputs and authority | State mutation / signing / execution | Evidence and gap |
 | --- | --- | --- | --- |
@@ -65,10 +71,10 @@ not the financial-action boundary.
 | SDK / CLI | SDK and agent CLI submit to `DecisionEngine`; operator CLI exposes admin, approve and sign commands | SDK cannot sign/approve/execute; local operator CLI has privileged commands | SDK capability test and CLI help; no server-bound MCP identity |
 | Money / transaction | `Money` is positive integer minor units plus INR/USD/EUR/JPY/KWD; `Transaction` defaults/fixes new transactions to canonical v2 | In-memory domain state only | Unit/property/regression tests; exact legacy database migration only partly verified |
 | Identity / authority | Root-signed YAML registry with per-actor source/destination allowlists, authority limit and authority currency | Root key can mutate registry; decision path consumes actor configuration | Tests prove source lists load, empty grants deny, agent/literal wildcard denies, trusted operator wildcard use is recorded; AccountRegistry/alias resolution absent |
-| Decision / policy / risk | `DecisionEngine` combines actor authority, policy, risk, nonce claim and receipt | Multiple commits/sessions create records and state | Focused decision/red-team tests; atomicity and failure recovery are not proven |
-| Approval | Approval binds hash, policy request, expiry, prospective approved version, and approver key from the root-signed identity registry | Approval row/request plus APPROVED transition use one session/CAS; ledger append follows commit | Stale-version, key-substitution, forged-approved-state, duplicate-approval and integration tests; approval DB/audit are not atomic |
-| Signing | Revalidates receipt, policy, authority, approval, signer identity key and authorized row version; signature remains over canonical v2 bytes | Signature/key/signed version and SIGNED transition use row-level CAS | Threaded exactly-one-signer, mutation and authority-chain tests; lifecycle version is stored/evidence-bound but not included in signature bytes |
-| Simulator | Revalidates decision/audit, policy, authority, approval, signer evidence, canonical hash and Ed25519 signature | Balance debit/credit, unique execution row and EXECUTED transition CAS share one SQLite transaction | Exact approval-backed flow, tamper/substitution/replay and concurrent single-settlement tests; process/fault tests and signed checkpoints absent |
+| Decision / policy / risk | `DecisionEngine` combines actor authority, policy, risk, nonce claim and receipt | Transaction, nonce, optional approval request, lifecycle CAS, receipt, and DECISION audit append share one SQLite transaction | Full suite and injected receipt/pre-commit rollback tests; process-level decision contention remains untested |
+| Approval | Approval binds hash, policy request, expiry, prospective approved version, and approver key from the root-signed identity registry | Approval row, request count/state, optional APPROVED CAS, and approval audit share one transaction | Stale-version, key-substitution, forged-state, duplicate-approval, and evidence-failure rollback tests |
+| Signing | Revalidates receipt, policy, authority, approval, signer identity key and authorized row version; signature remains over canonical v2 transaction bytes | Signature/key/signed version and SIGNED transition use row-level CAS with signing audit in the same transaction | Threaded and spawned-process exactly-one-signature tests plus evidence-failure rollback/retry; lifecycle counter is cross-checked in stored evidence but not directly signed, and full-database rewrite resistance is out of scope |
+| Simulator | Revalidates decision/audit, policy, authority, approval, signer evidence, canonical hash and Ed25519 signature | `BEGIN IMMEDIATE` serializes the settlement read/validate/write boundary before transaction/evidence reads; balance debit/credit, unique execution row, EXECUTED CAS, and execution audit evidence share that transaction | Immediate-lock SQL trace, six deterministic rollback/reload/retry checkpoints, evidence consistency, idempotent replay, separate-session thread race, and spawned-process single-effect test; forced process death and signed checkpoints absent |
 | Audit / attestation | SQLite hash chain; Ed25519 attestation checked against local configured key/live root | Appends audit; generates signed artifact | Ordinary row-tamper and attestation tests; no sequence numbers, append-only triggers, signed checkpoints, or external anchoring |
 | Engineering MCP | `tools/devtools_mcp.py` tools run tests/attacks/bench and read task/invariant docs | Can launch repository commands; no transaction authority | Path jail is used for documentation reads; not a security MCP implementation |
 
@@ -113,6 +119,17 @@ results, not before.
 
 ## Requirement Traceability
 
+### M2.2 Completed Guarantees
+
+- Decision, approval, signing, and local execution state plus required SQLite evidence commit atomically.
+- Execution uses targeted `BEGIN IMMEDIATE` with a 5000 ms busy timeout; two spawned processes executing the same transaction observe one deterministic result and one financial effect.
+- Test-injected failures rollback database writes; a fresh session reload verifies persistent state and retry completes exactly once.
+- Lifecycle revision is enforced through SigningGate CAS, recorded `signed_version` evidence, and execution-time equality checks. It is intentionally not included in canonical transaction bytes because it is a storage concurrency token rather than caller-controlled authority data. Full SQLite-file rewrite remains able to rewrite the unkeyed ledger; signature-envelope binding remains open for a separate security review.
+
+### Remaining M2.3 Work
+
+- Forced process termination at commit boundaries, process-level signing/decision races, lifecycle-version signature-envelope review, sequenced ledger/checkpoints, and external anchoring remain open. No M2.3 checkpoint or anchoring functionality is implemented here.
+
 | Requirement | Implementation | Test/attack proof | Status |
 | --- | --- | --- | --- |
 | Mission control | AGENTS, tasks, Makefile, devtools MCP | Tier scripts exist; some targets are placeholders | PARTIAL |
@@ -121,9 +138,9 @@ results, not before.
 | Effective allowlist authority | Signed source/destination actor lists, explicit actor authority currency, empty-list deny, agent wildcard deny | Registry, helper, decision, cross-currency and wildcard tests | PARTIAL: account aliases/registry and legacy actor review migration absent |
 | Legacy data conversion | Dry-run/apply exactness migration, quarantine table, backup required, unsigned request fail-closed | Populated SQLite exact/inexact/non-finite fixture, dry-run immutability, idempotence | PARTIAL: not applied to user DB; restore drill and real pre-v2 artifact verification pending |
 | Simulator integer money | `balance_minor` and conditional arithmetic | Representative conservation, rejected no-mutation, replay/signature tests | PARTIAL: generated multi-transfer property/stateful suite absent |
-| M2.1 authority chain | Decision receipt/hash/version, registry-bound approver/signer keys, approval version, signing CAS, execution verification/CAS | Authority-chain integration and attacker regressions; 207-test full suite | PARTIAL: lifecycle version is not signed as bytes; database/audit not fully atomic |
-| State and atomicity | Decision, nonce, receipt, and audit span multiple commits; no shared decision UoW | No crash injection or process-level contention proof | OPEN (M2.2) |
-| CAS signing/execution | Existing row-level CAS for signing and execution; execution effects share DB transaction | Two-thread exactly-one-winner tests | PARTIAL: process-level races and fault recovery pending |
+| M2.1 authority chain | Decision receipt/hash/version, registry-bound approver/signer keys, approval version, signing CAS, execution verification/CAS | Authority-chain integration and attacker regressions; 219-test full suite | PARTIAL: lifecycle version is not signed as bytes; ledger has no signed checkpoint |
+| M2.2 state and atomicity | Shared-session DB transactions for decision, approval, signing, and local simulator execution; targeted immediate write lock for execution | Evidence-failure rollback tests, six execution fault points, reload/retry, idempotent replay, threaded races, spawned-process execution race | PASS for requested DB-local M2.2 behavior; forced process-death recovery and process-level decision/signing races remain open |
+| Ledger/checkpoints/anchoring | Existing unsequenced hash chain and local attestation | Ordinary tamper detection only | OPEN for signed checkpoints and external anchoring; not part of M2.2 |
 | Ledger integrity | Unsequenced hash chain and local attestation | Ordinary tamper detection only | PARTIAL; no signed checkpoint or full-chain rewrite protection |
 | AI provider/evaluation | Ollama client, extraction schema, fixed 10-case AI corpus | Local AI tests and red-team tests | PARTIAL; no provider protocol/CIs/reproducible multi-model harness |
 | Product MCP | No package or tool surface | No MCP-specific security tests | NOT STARTED |
@@ -139,10 +156,10 @@ results, not before.
    before explicit authorization.
 3. Add AccountRegistry and alias/currency model, migrate legacy actor allowlists
    to explicit reviewed grants, and remove remaining hardcoded account literals.
-4. M2.2: atomic decision UoW, process-level contention tests, crash injection,
-   monotonic ledger sequence, signed checkpoints, and external anchoring. Review
-   whether the canonical-signature envelope should bind lifecycle version before
-   changing signature bytes.
+4. Remaining M2.3 work: monotonic ledger sequence, signed checkpoints, and
+  external anchoring. Forced process-death recovery, process-level decision/
+  signing contention, and lifecycle-version signature-envelope review also
+  remain open. Do not treat the uncheckpointed ledger as externally anchored.
 5. Run T1/T2 and CI on Python 3.12/3.13, then repeat benchmarks with OS/hardware
   metadata; only the focused Ruff check was run for M2.1.
 6. Only after M2, build product MCP, provider/evaluation integration, and release
@@ -150,8 +167,12 @@ results, not before.
 
 ## Publication Status
 
-The M2.1 work started from `m1-money` at `9bde6ca`. No canonical transaction
-bytes, vectors, or signed transaction field set changed. The local full suite
-passes 207 tests; the focused Ruff check passes on the core authority-chain
-modules, while full Ruff/CI were not run. The unsigned same-database audit
-limitation and M2.2 atomicity gaps remain.
+The M2.2 work started from `m1-money` at `4a8461f`. No canonical transaction
+bytes, vectors, or signed transaction field set changed. Final local full suite:
+221 passed, 0 failed. The spawned-process execution race passed three
+consecutive additional runs; the focused process/recovery slice passed 39 tests
+before the final lifecycle-version case was added. Focused Ruff remains
+non-green due to baseline findings; the requested-file comparison matches
+committed HEAD. Forced process-death recovery, process-level signing/decision
+contention, the unsigned same-database audit limitation, missing signed
+checkpoints, and absent external anchoring remain.

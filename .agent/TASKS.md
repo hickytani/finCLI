@@ -40,7 +40,7 @@
 ### M2 - Integrity and Atomicity (FG-301, FG-302, FG-303, FG-304)
 - [x] Transaction row version and decision-path CAS state update; exact completed idempotency retry returns its stored receipt/result, changed signed content with a reused key is rejected.
 - [-] M2.1 authority-chain core: decision receipt/hash/version, signed-registry approver/signer keys, version-bound approvals, signing CAS, execution-time chain verification, and execution CAS with balance/unique-result transaction. Signature bytes do not bind lifecycle version; process-level and crash-boundary proofs remain open.
-- [ ] M2.2: single decision UoW for transaction + nonce + receipt + audit, approval/signing audit atomicity, process-level contention and crash injection.
+- [x] M2.2 requested acceptance: decision/nonce/receipt/audit, approval/signing evidence, and simulator execution share SQLite transactions; injected rollback/reload/retry tests pass; execution alone uses `BEGIN IMMEDIATE` + 5000 ms busy timeout; spawned-process retries return one result/effect. Forced process death and process-level decision/signing races remain follow-up work.
 - [ ] Review whether signing bytes must include lifecycle version; current signature remains over canonical v2 bytes and signed-version evidence is checked separately. Any signature-envelope change requires crypto/security review.
 - [ ] FG-301: Atomic Unit of Work for decision pipeline (single session, `BEGIN IMMEDIATE`, SQLite WAL).
 - [x] FG-302: CAS signing gate (`UPDATE ... WHERE state = expected`) and simulator execution CAS.

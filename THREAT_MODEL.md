@@ -12,13 +12,27 @@ replay, approval, signing, and simulator checks on its implemented local
 CLI/SDK path. The decision/approval/signing/execution chain now carries the
 canonical v2 transaction hash and persisted lifecycle-version evidence; approval
 and signer keys must match public keys in the root-signed identity registry.
-This is not a proof of a universal **NO**. Decision writes are not one atomic
-unit, audit appends remain outside their corresponding state commits, signatures
-still cover canonical v2 bytes rather than a lifecycle-version envelope, the
-hash ledger has no signed checkpoint, process-level race/fault injection is
-pending, no product MCP server exists, and an attacker able to rewrite the
-entire SQLite file can recompute its unkeyed ledger chain. Claims must remain
-limited to behaviors with passing tests and measured evaluation evidence.
+This is not a proof of a universal **NO**. Decision, approval, signing, and
+synthetic execution writes now use local SQLite transaction boundaries that
+include their required database evidence; deterministic injected failures and
+separate-session thread tests exercise rollback, retry, and one-effect behavior.
+Separate-OS-process signing and execution races are tested: exactly one signing
+process stores a valid signature and one signing audit entry; competing
+execution processes observe one stored result and produce one financial effect.
+Injected failures across decision, approval, signing, and execution paths roll
+back their partial writes; fresh-session reads and exact-operation retries
+verify recovery. Abrupt process termination during commit remains untested.
+Signatures cover canonical v2 transaction bytes but do not directly include the
+database lifecycle-version counter. That counter is not request-supplied
+authority data: it is a persistence CAS token, checked against the versioned
+decision/approval/signing evidence and current row before execution. This
+protects against stale lifecycle state when the linked evidence is unchanged,
+but is not cryptographic protection against an attacker who can rewrite the
+entire SQLite file and recompute its uncheckpointed hash chain. Binding the
+counter into a signed envelope would change the signing contract and requires
+separate G6 review; it is intentionally outside M2.2. The hash ledger has no
+signed checkpoint, no product MCP server exists, and claims must remain limited
+to behaviors with passing tests and measured evaluation evidence.
 
 ---
 
@@ -38,7 +52,7 @@ limited to behaviors with passing tests and measured evaluation evidence.
 ### Threat Vector 1: Transaction Replay
 - **Attack**: An attacker captures a valid signed transaction and attempts to submit or sign it again with the same nonce.
 - **Scenario**: `finguard/attacks/scenarios/replay.yaml`
-- **Mitigation**: Persistent SQLite `NonceStore` registers every used nonce. Re-attempts are immediately blocked, logged to audit ledger, and generate a `CRITICAL` security incident (`INC-XXXX`).
+- **Mitigation**: Persistent SQLite `NonceStore` registers every used nonce; a new request reusing that nonce is blocked. An exact retry of an already completed simulator execution returns its original evidence-checked result and applies no additional financial effect. Both paths preserve the single-effect invariant.
 
 ### Threat Vector 2: Transaction Tampering In-Flight
 - **Attack**: An attacker modifies the amount or parameters of a transaction after human approval but prior to final cryptographic signing.
@@ -78,8 +92,9 @@ limited to behaviors with passing tests and measured evaluation evidence.
       - Transaction identity is the existing canonical v2 SHA-256 hash; no second transaction serializer is introduced.
       - The policy receipt records that hash and its lifecycle row version. Approval requests bind the same hash/version; approval signatures bind the prospective `APPROVED` row version and the signed-registry approver key.
       - Signing rechecks receipt, current policy/authority, approval evidence, signer registry key, and the exact row version being consumed; the signature remains over canonical v2 bytes. Its `signed_version` is recorded with the signature/key in a row-level CAS.
-      - Execution revalidates receipt, decision audit, policy, authority, approval evidence when required, signer audit/key, canonical hash, and signature. Balance debit/credit, execution uniqueness record, and `SIGNED -> EXECUTED` CAS share one SQLite transaction. Replays are rejected.
-      - Decision+nonce+receipt+ledger and later audit appends are not a single UoW. Version is not part of signature bytes pending security review. The ledger is not checkpoint-signed or externally anchored.
+      - Execution revalidates receipt, decision audit, policy, authority, approval evidence when required, signer audit/key, canonical hash, and signature. Balance debit/credit, unique execution record, `SIGNED -> EXECUTED` CAS, and execution audit entry share one SQLite transaction. An exact completed retry returns the stored deterministic result after checking its evidence; it does not repeat the transfer.
+      - Decision + nonce + optional approval request + lifecycle CAS + receipt + DECISION ledger entry share one SQLite transaction. Approval state/audit and signing CAS/signature/audit likewise share their write transaction. Injected failures roll these writes back; these are DB-local effects only. Execution acquires SQLite's writer reservation with `BEGIN IMMEDIATE` before reading transaction/evidence, and SQLite's 5-second `busy_timeout` lets a competing process wait and then observe the committed idempotent result. This lock is intentionally scoped to simulator execution, not applied to every transaction.
+      - Lifecycle `version` is a database concurrency token, not an authority input: API callers do not supply it; SigningGate reads the authorized row version, CAS-writes SIGNED plus `signed_version`, and appends that version to signing evidence in the same transaction. Execution rejects unless row version equals `signed_version` and matching signing evidence is present. A test changes the signed row version and proves no transfer occurs. The signature intentionally remains over canonical v2 transaction bytes: adding lifecycle state to a signature envelope would change the signing contract without strengthening the binding of amount, accounts, metadata, or other execution authority data. M2.2 therefore does not claim the lifecycle counter is itself cryptographically signed. A privileged whole-file database writer can rewrite the row and recompute the co-located unkeyed audit chain; protection against that actor needs signed checkpoints/external anchoring and a separately G6-reviewed signing-envelope change, both outside this milestone.
 
 ---
 

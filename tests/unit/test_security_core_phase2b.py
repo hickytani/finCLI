@@ -1,25 +1,52 @@
 import datetime
-import threading
 import json
+import multiprocessing
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from sqlalchemy import event
 
 from finguard.approvals.service import ApprovalService
+from finguard.audit.ledger import AuditLedger
 from finguard.audit.nonce_store import NonceStore
+from finguard.core.canonical import canonical_serialize
 from finguard.core.enums import ActorType, Currency
 from finguard.core.errors import SecurityError
 from finguard.core.transaction import Transaction
-from finguard.core.canonical import canonical_serialize
 from finguard.crypto.hashing import sha256_hash
 from finguard.crypto.keystore import Keystore
+from finguard.crypto.signing import verify_signature
 from finguard.decision import DecisionEngine
 from finguard.identity.registry import IdentityRegistry
 from finguard.signing import SigningGate
 from finguard.simulator import FinancialSimulator
 from finguard.storage.database import get_session
-from finguard.storage.models import ApprovalRecord, ApprovalRequestRecord, DecisionReceiptRecord, SimulatorExecutionRecord, TransactionRecord
+from finguard.storage.models import (
+    ApprovalRecord,
+    ApprovalRequestRecord,
+    AuditEntryRecord,
+    DecisionReceiptRecord,
+    SimulatorExecutionRecord,
+)
 from finguard.storage.repositories import TransactionRepository
+
+
+def _execute_transaction_process(transaction_id, start_barrier, result_queue):
+    try:
+        start_barrier.wait(timeout=30)
+        result_queue.put(("ok", FinancialSimulator().execute(transaction_id)))
+    except SecurityError as exc:
+        result_queue.put(("error", type(exc).__name__, str(exc)))
+
+
+def _sign_transaction_process(transaction_id, key_id, password, start_barrier, result_queue):
+    try:
+        start_barrier.wait(timeout=30)
+        signature = SigningGate().sign(transaction_id, key_id, password)
+        result_queue.put(("ok", signature))
+    except SecurityError as exc:
+        result_queue.put(("error", type(exc).__name__, str(exc)))
 
 
 def _agent_transaction(amount="100.00"):
@@ -351,6 +378,32 @@ def test_execution_rejects_transaction_mutation_after_signing(bind_actor_key):
         FinancialSimulator().execute(tx.transaction_id)
 
 
+def test_execution_rejects_stale_signed_lifecycle_version(bind_actor_key):
+    transaction = Transaction(
+        actor_id="operator-1", from_account="treasury", to_account="vendor-a",
+        amount="125.00", currency=Currency.INR,
+    )
+    DecisionEngine().decide(transaction)
+    Keystore().create_keypair("stale-version-signer", "test-password")
+    bind_actor_key("operator-1", "stale-version-signer")
+    SigningGate().sign(transaction.transaction_id, "stale-version-signer", "test-password")
+
+    session = get_session()
+    try:
+        record = TransactionRepository(session).get(transaction.transaction_id)
+        assert record is not None
+        record.version += 1
+        session.commit()
+    finally:
+        session.close()
+
+    simulator = FinancialSimulator()
+    before = {item["account_id"]: item["balance_minor"] for item in simulator.balances()}
+    with pytest.raises(SecurityError, match="Signed transaction version is stale"):
+        simulator.execute(transaction.transaction_id)
+    assert {item["account_id"]: item["balance_minor"] for item in simulator.balances()} == before
+
+
 def test_signature_from_another_transaction_cannot_authorize_execution(bind_actor_key):
     first = DecisionEngine().decide(Transaction(
         actor_id="operator-1", from_account="treasury", to_account="vendor-a",
@@ -436,12 +489,126 @@ def test_concurrent_signing_has_exactly_one_cas_winner(bind_actor_key):
         session.close()
 
 
-def test_concurrent_execution_moves_funds_exactly_once(bind_actor_key):
+def test_approval_audit_failure_rolls_back_approval_and_state(bind_actor_key, monkeypatch):
+    result = DecisionEngine().decide(_agent_transaction())
+    Keystore().create_keypair("atomic-approval-key", "test-password")
+    approver = bind_actor_key("approver-1", "atomic-approval-key")
+
+    def fail_approval_evidence(self, action, *args, **kwargs):
+        if action == "APPROVAL":
+            raise RuntimeError("injected approval evidence failure")
+        return original_append(self, action, *args, **kwargs)
+
+    original_append = AuditLedger.append
+    monkeypatch.setattr(AuditLedger, "append", fail_approval_evidence)
+    with pytest.raises(RuntimeError, match="approval evidence failure"):
+        ApprovalService().approve_transaction(
+            result.transaction.transaction_id,
+            approver,
+            "atomic-approval-key",
+            "test-password",
+        )
+
+    session = get_session()
+    try:
+        transaction = TransactionRepository(session).get(result.transaction.transaction_id)
+        request = session.query(ApprovalRequestRecord).filter_by(
+            transaction_id=result.transaction.transaction_id
+        ).one()
+        assert transaction is not None
+        assert transaction.state == "pending_approval"
+        assert request.current_approvals == 0
+        assert request.state == "pending"
+        assert session.query(ApprovalRecord).filter_by(
+            transaction_id=result.transaction.transaction_id
+        ).count() == 0
+        assert session.query(AuditEntryRecord).filter_by(
+            transaction_id=result.transaction.transaction_id, action="APPROVAL"
+        ).count() == 0
+    finally:
+        session.close()
+
+    monkeypatch.setattr(AuditLedger, "append", original_append)
+    ApprovalService().approve_transaction(
+        result.transaction.transaction_id,
+        approver,
+        "atomic-approval-key",
+        "test-password",
+    )
+    session = get_session()
+    try:
+        request = session.query(ApprovalRequestRecord).filter_by(
+            transaction_id=result.transaction.transaction_id
+        ).one()
+        assert request.current_approvals == 1
+        assert session.query(ApprovalRecord).filter_by(
+            transaction_id=result.transaction.transaction_id
+        ).count() == 1
+        assert session.query(AuditEntryRecord).filter_by(
+            transaction_id=result.transaction.transaction_id, action="APPROVAL"
+        ).count() == 1
+    finally:
+        session.close()
+
+
+def test_signing_audit_failure_rolls_back_signature_and_state(bind_actor_key, monkeypatch):
     tx = Transaction(
         actor_id="operator-1", from_account="treasury", to_account="vendor-a",
         amount="125.00", currency=Currency.INR,
     )
     result = DecisionEngine().decide(tx)
+    Keystore().create_keypair("atomic-signing-key", "test-password")
+    bind_actor_key("operator-1", "atomic-signing-key")
+
+    def fail_signing_evidence(self, action, *args, **kwargs):
+        if action == "SIGNING_GATE":
+            raise RuntimeError("injected signing evidence failure")
+        return original_append(self, action, *args, **kwargs)
+
+    original_append = AuditLedger.append
+    monkeypatch.setattr(AuditLedger, "append", fail_signing_evidence)
+    with pytest.raises(RuntimeError, match="signing evidence failure"):
+        SigningGate().sign(result.transaction.transaction_id, "atomic-signing-key", "test-password")
+
+    session = get_session()
+    try:
+        record = TransactionRepository(session).get(tx.transaction_id)
+        assert record is not None
+        assert record.state == "created"
+        assert record.signature is None
+        assert record.signing_key_id is None
+        assert record.signed_version is None
+        assert session.query(AuditEntryRecord).filter_by(
+            transaction_id=tx.transaction_id, action="SIGNING_GATE"
+        ).count() == 0
+    finally:
+        session.close()
+
+    monkeypatch.setattr(AuditLedger, "append", original_append)
+    signature = SigningGate().sign(
+        result.transaction.transaction_id, "atomic-signing-key", "test-password"
+    )
+    assert signature
+    session = get_session()
+    try:
+        record = TransactionRepository(session).get(tx.transaction_id)
+        assert record is not None
+        assert record.state == "signed"
+        assert record.signature == signature
+        assert record.signed_version == record.version
+        assert session.query(AuditEntryRecord).filter_by(
+            transaction_id=tx.transaction_id, action="SIGNING_GATE"
+        ).count() == 1
+    finally:
+        session.close()
+
+
+def test_concurrent_execution_moves_funds_exactly_once(bind_actor_key):
+    tx = Transaction(
+        actor_id="operator-1", from_account="treasury", to_account="vendor-a",
+        amount="125.00", currency=Currency.INR,
+    )
+    DecisionEngine().decide(tx)
     Keystore().create_keypair("concurrent-execution-signer", "test-password")
     bind_actor_key("operator-1", "concurrent-execution-signer")
     SigningGate().sign(tx.transaction_id, "concurrent-execution-signer", "test-password")
@@ -449,27 +616,184 @@ def test_concurrent_execution_moves_funds_exactly_once(bind_actor_key):
     before = {item["account_id"]: item["balance_minor"] for item in simulator.balances()}
     barrier = threading.Barrier(2)
 
-    def execute() -> bool:
+    def execute() -> dict | None:
         barrier.wait()
         try:
-            simulator.execute(tx.transaction_id)
-            return True
+            return simulator.execute(tx.transaction_id)
         except SecurityError:
-            return False
+            return None
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         outcomes = list(executor.map(lambda _: execute(), range(2)))
 
-    assert outcomes.count(True) == 1
-    assert outcomes.count(False) == 1
+    successful_results = [outcome for outcome in outcomes if outcome is not None]
+    assert successful_results
+    assert all(outcome == successful_results[0] for outcome in successful_results)
     after = {item["account_id"]: item["balance_minor"] for item in simulator.balances()}
     assert after["treasury"] == before["treasury"] - tx.amount_minor
     assert after["vendor-a"] == before["vendor-a"] + tx.amount_minor
     session = get_session()
     try:
         assert session.query(SimulatorExecutionRecord).filter_by(transaction_id=tx.transaction_id).count() == 1
+        assert session.query(AuditEntryRecord).filter_by(
+            transaction_id=tx.transaction_id, action="SIMULATOR_EXECUTE"
+        ).count() == 1
     finally:
         session.close()
+
+
+def test_processes_concurrently_execute_one_transaction_exactly_once(bind_actor_key):
+    transaction = Transaction(
+        actor_id="operator-1", from_account="treasury", to_account="vendor-a",
+        amount="125.00", currency=Currency.INR,
+    )
+    DecisionEngine().decide(transaction)
+    Keystore().create_keypair("process-execution-signer", "test-password")
+    bind_actor_key("operator-1", "process-execution-signer")
+    SigningGate().sign(transaction.transaction_id, "process-execution-signer", "test-password")
+
+    simulator = FinancialSimulator()
+    before = {item["account_id"]: item["balance_minor"] for item in simulator.balances()}
+    context = multiprocessing.get_context("spawn")
+    start_barrier = context.Barrier(2)
+    result_queue = context.Queue()
+    processes = [
+        context.Process(
+            target=_execute_transaction_process,
+            args=(transaction.transaction_id, start_barrier, result_queue),
+        )
+        for _ in range(2)
+    ]
+    try:
+        for process in processes:
+            process.start()
+        outcomes = [result_queue.get(timeout=45) for _ in processes]
+        for process in processes:
+            process.join(timeout=45)
+        assert all(not process.is_alive() and process.exitcode == 0 for process in processes)
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+        result_queue.close()
+
+    assert all(outcome[0] == "ok" for outcome in outcomes), outcomes
+    assert outcomes[0][1] == outcomes[1][1]
+    after = {item["account_id"]: item["balance_minor"] for item in simulator.balances()}
+    assert after["treasury"] == before["treasury"] - transaction.amount_minor
+    assert after["vendor-a"] == before["vendor-a"] + transaction.amount_minor
+
+    session = get_session()
+    try:
+        stored = TransactionRepository(session).get(transaction.transaction_id)
+        assert stored is not None
+        assert stored.state == "executed"
+        assert session.query(SimulatorExecutionRecord).filter_by(
+            transaction_id=transaction.transaction_id
+        ).count() == 1
+        assert session.query(AuditEntryRecord).filter_by(
+            transaction_id=transaction.transaction_id, action="SIMULATOR_EXECUTE"
+        ).count() == 1
+    finally:
+        session.close()
+
+
+def test_processes_concurrently_sign_one_transaction_exactly_once(bind_actor_key):
+    transaction = Transaction(
+        actor_id="operator-1", from_account="treasury", to_account="vendor-a",
+        amount="125.00", currency=Currency.INR,
+    )
+    DecisionEngine().decide(transaction)
+    Keystore().create_keypair("process-signing-signer", "test-password")
+    bind_actor_key("operator-1", "process-signing-signer")
+
+    context = multiprocessing.get_context("spawn")
+    start_barrier = context.Barrier(2)
+    result_queue = context.Queue()
+    processes = [
+        context.Process(
+            target=_sign_transaction_process,
+            args=(
+                transaction.transaction_id,
+                "process-signing-signer",
+                "test-password",
+                start_barrier,
+                result_queue,
+            ),
+        )
+        for _ in range(2)
+    ]
+    try:
+        for process in processes:
+            process.start()
+        outcomes = [result_queue.get(timeout=60) for _ in processes]
+        for process in processes:
+            process.join(timeout=60)
+        assert all(not process.is_alive() and process.exitcode == 0 for process in processes)
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+        result_queue.close()
+
+    assert [outcome[0] for outcome in outcomes].count("ok") == 1, outcomes
+    assert [outcome[0] for outcome in outcomes].count("error") == 1, outcomes
+    session = get_session()
+    try:
+        record = TransactionRepository(session).get(transaction.transaction_id)
+        assert record is not None
+        assert record.state == "signed"
+        assert record.signature
+        assert record.signed_version == record.version
+        assert verify_signature(
+            transaction.canonical_bytes(),
+            record.signature,
+            bytes.fromhex(Keystore().get_public_key("process-signing-signer")),
+        )
+        assert session.query(AuditEntryRecord).filter_by(
+            transaction_id=transaction.transaction_id, action="SIGNING_GATE"
+        ).count() == 1
+    finally:
+        session.close()
+
+
+def test_execution_starts_begin_immediate_before_reading_transaction(bind_actor_key):
+    from finguard.storage.database import get_engine
+
+    transaction = Transaction(
+        actor_id="operator-1", from_account="treasury", to_account="vendor-a",
+        amount="125.00", currency=Currency.INR,
+    )
+    DecisionEngine().decide(transaction)
+    Keystore().create_keypair("immediate-execution-signer", "test-password")
+    bind_actor_key("operator-1", "immediate-execution-signer")
+    SigningGate().sign(transaction.transaction_id, "immediate-execution-signer", "test-password")
+
+    statements = []
+
+    def record_statement(connection, cursor, statement, parameters, context, executemany):
+        statements.append((statement.strip().upper(), connection.connection.driver_connection.in_transaction))
+
+    engine = get_engine()
+    event.listen(engine, "after_cursor_execute", record_statement)
+    try:
+        FinancialSimulator().execute(transaction.transaction_id)
+    finally:
+        event.remove(engine, "after_cursor_execute", record_statement)
+
+    immediate_positions = [
+        index for index, (statement, active) in enumerate(statements)
+        if statement == "BEGIN IMMEDIATE" and active
+    ]
+    transaction_read_positions = [
+        index for index, (statement, _) in enumerate(statements)
+        if statement.startswith("SELECT") and "FROM TRANSACTIONS" in statement
+    ]
+    assert len(immediate_positions) == 1
+    assert transaction_read_positions
+    assert immediate_positions[0] < transaction_read_positions[0]
 
 
 def test_agent_cannot_select_an_unauthorized_source_account():

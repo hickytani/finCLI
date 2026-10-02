@@ -230,13 +230,19 @@ class RedTeamRunner:
         self._approve(tx)
         self._sign(tx)
         simulator = FinancialSimulator()
-        simulator.execute(tx.transaction_id)
+        original_result = simulator.execute(tx.transaction_id)
         before = simulator.balances()
         try:
-            simulator.execute(tx.transaction_id)
+            replay_result = simulator.execute(tx.transaction_id)
         except SimulatorError as exc:
             return self._blocked_result("RT-008", "replay", str(exc), tx_id=tx.transaction_id, before=before, signing="verified")
-        return {"expected_outcome": "blocked", "actual_outcome": "allowed", "funds_status": "observed", "funds_moved": self._balance_delta(before, simulator.balances()), "signing_status": "violation"}
+        after = simulator.balances()
+        if replay_result == original_result and self._balance_delta(before, after) == 0:
+            return self._blocked_result(
+                "RT-008", "replay", "Identical retry returned the stored result without another transfer",
+                tx_id=tx.transaction_id, before=before, signing="verified"
+            )
+        return {"expected_outcome": "blocked", "actual_outcome": "allowed", "funds_status": "observed", "funds_moved": self._balance_delta(before, after), "signing_status": "violation"}
 
     def run_approval_forgery(self) -> dict:
         self._prepare_keys()
@@ -300,15 +306,14 @@ class RedTeamRunner:
         self._sign(tx)
         simulator = FinancialSimulator()
         before = simulator.balances()
-        outcomes: list[str] = []
+        outcomes: list[dict | None] = []
         lock = threading.Lock()
 
         def execute() -> None:
             try:
-                simulator.execute(tx.transaction_id)
-                outcome = "executed"
+                outcome = simulator.execute(tx.transaction_id)
             except SimulatorError:
-                outcome = "rejected"
+                outcome = None
             with lock:
                 outcomes.append(outcome)
 
@@ -318,8 +323,13 @@ class RedTeamRunner:
         for thread in threads:
             thread.join()
         after = simulator.balances()
-        if outcomes.count("executed") == 1 and outcomes.count("rejected") == 3 and self._balance_delta(before, after) == tx.amount_minor * 2:
-            return {"expected_outcome": "blocked", "actual_outcome": "blocked", "rejection": "three concurrent replays rejected", "funds_status": "observed", "funds_moved": 0, "authorized_movement_minor": tx.amount_minor, "signing_status": "verified", "concurrency": outcomes}
+        successful_results = [outcome for outcome in outcomes if outcome is not None]
+        if (
+            successful_results
+            and all(outcome == successful_results[0] for outcome in successful_results)
+            and self._balance_delta(before, after) == tx.amount_minor * 2
+        ):
+            return {"expected_outcome": "blocked", "actual_outcome": "blocked", "rejection": "concurrent retries share one committed result and one financial effect", "funds_status": "observed", "funds_moved": 0, "authorized_movement_minor": tx.amount_minor, "signing_status": "verified", "concurrency": outcomes}
         return {"expected_outcome": "blocked", "actual_outcome": "allowed", "funds_status": "observed", "funds_moved": self._balance_delta(before, after), "signing_status": "violation", "concurrency": outcomes}
 
     def run_identity_impersonation(self) -> dict:

@@ -116,9 +116,10 @@ class TransactionRepository:
                 self.session.rollback()
         return result.rowcount == 1
 
-    def save(self, record: TransactionRecord) -> None:
+    def save(self, record: TransactionRecord, *, commit: bool = True) -> None:
         self.session.merge(record)
-        self.session.commit()
+        if commit:
+            self.session.commit()
 
     def get(self, transaction_id: str) -> Optional[TransactionRecord]:
         return self.session.get(TransactionRecord, transaction_id)
@@ -320,9 +321,11 @@ class AuditRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def append(self, record: AuditEntryRecord) -> None:
+    def append(self, record: AuditEntryRecord, *, commit: bool = True) -> None:
         self.session.add(record)
-        self.session.commit()
+        self.session.flush()
+        if commit:
+            self.session.commit()
 
     def get_all_ordered(self) -> list[AuditEntryRecord]:
         return (
@@ -533,9 +536,10 @@ class ReceiptRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def save(self, record: DecisionReceiptRecord) -> None:
+    def save(self, record: DecisionReceiptRecord, *, commit: bool = True) -> None:
         self.session.merge(record)
-        self.session.commit()
+        if commit:
+            self.session.commit()
 
     def get(self, receipt_id: str) -> Optional[DecisionReceiptRecord]:
         return self.session.get(DecisionReceiptRecord, receipt_id)

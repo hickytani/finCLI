@@ -118,22 +118,22 @@ class SigningGate:
         # A stored nonce must still belong to this exact transaction.
         session = get_session()
         try:
-            from finguard.storage.repositories import NonceRepository
-            nonce = NonceRepository(session).session.get(__import__("finguard.storage.models", fromlist=["NonceRecord"]).NonceRecord, tx.nonce)
-            if not nonce or nonce.transaction_id != tx.transaction_id:
-                raise SecurityError("Nonce replay state inconsistent")
-            rec = TransactionRepository(session).get(transaction_id)
-            if rec.version != authorized_version:
-                raise SecurityError("Transaction version changed during signing authorization")
-            if rec.state == TransactionState.SIGNED.value:
-                raise SecurityError("Transaction is already signed")
-            try:
-                TransactionStateMachine.validate_transition(rec.state, TransactionState.SIGNED)
-            except InvalidTransitionError as exc:
-                raise SecurityError("Transaction state does not permit signing") from exc
-            signature = sign_canonical_bytes(tx.canonical_bytes(), Keystore().load_private_key(key_id, password))
-            signed_version = rec.version + 1
-            try:
+            with session.begin():
+                from finguard.storage.models import NonceRecord
+                nonce = session.get(NonceRecord, tx.nonce)
+                if not nonce or nonce.transaction_id != tx.transaction_id:
+                    raise SecurityError("Nonce replay state inconsistent")
+                rec = TransactionRepository(session).get(transaction_id)
+                if rec.version != authorized_version:
+                    raise SecurityError("Transaction version changed during signing authorization")
+                if rec.state == TransactionState.SIGNED.value:
+                    raise SecurityError("Transaction is already signed")
+                try:
+                    TransactionStateMachine.validate_transition(rec.state, TransactionState.SIGNED)
+                except InvalidTransitionError as exc:
+                    raise SecurityError("Transaction state does not permit signing") from exc
+                signature = sign_canonical_bytes(tx.canonical_bytes(), Keystore().load_private_key(key_id, password))
+                signed_version = rec.version + 1
                 won = TransactionRepository(session).compare_and_swap_state(
                     transaction_id,
                     expected_version=authorized_version,
@@ -143,24 +143,26 @@ class SigningGate:
                         "signing_key_id": key_id,
                         "signed_version": signed_version,
                     },
+                    commit=False,
                 )
-            except OperationalError as exc:
-                session.rollback()
-                raise SecurityError("Concurrent signing attempt was rejected") from exc
-            if not won:
-                raise SecurityError("Transaction changed during signing; signing was rejected")
+                if not won:
+                    raise SecurityError("Transaction changed during signing; signing was rejected")
+                AuditLedger(session=session).append(
+                    "SIGNING_GATE",
+                    signer.actor_id,
+                    tx.transaction_id,
+                    "SIGNED",
+                    {
+                        "signer_actor_id": signer.actor_id,
+                        "key_id": key_id,
+                        "hash": tx.transaction_hash(),
+                        "signed_version": signed_version,
+                    },
+                    commit=False,
+                )
+        except OperationalError as exc:
+            session.rollback()
+            raise SecurityError("Concurrent signing attempt was rejected") from exc
         finally:
             session.close()
-        AuditLedger().append(
-            "SIGNING_GATE",
-            signer.actor_id,
-            tx.transaction_id,
-            "SIGNED",
-            {
-                "signer_actor_id": signer.actor_id,
-                "key_id": key_id,
-                "hash": tx.transaction_hash(),
-                "signed_version": signed_version,
-            },
-        )
         return signature
