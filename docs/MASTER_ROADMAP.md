@@ -11,14 +11,14 @@ implied.
   3.13.7. Runtime stack: Typer/Rich, Pydantic 2, SQLAlchemy 2/SQLite,
   cryptography/PyNaCl, argon2-cffi, networkx, PyYAML. Test tooling: pytest,
   pytest-cov/Hypothesis in dev extras, Ruff in dev extras.
-- Git: `m1-money` at `5d9ac23`, same as `origin/m1-money`; source changes are
-  dirty and not committed. Remote is `https://github.com/hickytani/finCLI.git`.
-- Latest full-suite run after authority, migration and roadmap changes: **187 passed,
-  3 failed**. Failures are in `tests/unit/test_redteam_hardening_pass.py`:
-  duplicate-approval setup (transaction already blocked), invalid incident state
-  transition, and detached audit row. These remain the only full-suite failures.
-- Latest deterministic attack/regression run: **42 passed**. The migration
-  fixture covers exact, inexact and non-finite legacy amounts.
+- Git checkpoint: `m1-money` at `9bde6ca`, same as `origin/m1-money`; M2.1
+  authority-chain changes are uncommitted. Remote is
+  `https://github.com/hickytani/finCLI.git`.
+- Pre-M2.1 baseline with preserved idempotency changes: **196 passed, 0 failed**.
+  Current full-suite run after M2.1 changes: **207 passed, 0 failed** in 41.61s.
+  SQLAlchemy `datetime.utcnow()` deprecation warnings remain.
+- Focused authority-chain, simulator, signing, approval, attack and migration
+  slices passed. Threaded signing and execution races each prove one winner.
 - Final isolated benchmark: decision N=1000 p50 7.117 ms, p95 9.711 ms,
   p99 12.857 ms, 133.57 ops/s; Money parse/format p95 0.0021 ms; canonical hash
   p95 0.0165 ms; Ed25519 sign p95 0.0377 ms; ledger 200-entry verify 11.678 ms.
@@ -51,9 +51,11 @@ flowchart TD
     Simulator --> Ledger
 ```
 
-The flow is split across modules and multiple SQLite sessions. Decision,
-nonce, receipt, audit append, approval, signing-state write, and simulator audit
-append do not currently share a single atomic unit of work. There is no product
+The flow is split across modules and multiple SQLite sessions. Signing and
+execution state changes use row-level CAS; simulator balances, execution record,
+and `SIGNED -> EXECUTED` CAS share one SQLite transaction. Decision, nonce,
+receipt, and decision audit append do not share one atomic unit; approval/signing
+audit appends also follow their database commits. There is no product
 `finguard.mcp` server. `tools/devtools_mcp.py` is an engineering helper and is
 not the financial-action boundary.
 
@@ -64,9 +66,9 @@ not the financial-action boundary.
 | Money / transaction | `Money` is positive integer minor units plus INR/USD/EUR/JPY/KWD; `Transaction` defaults/fixes new transactions to canonical v2 | In-memory domain state only | Unit/property/regression tests; exact legacy database migration only partly verified |
 | Identity / authority | Root-signed YAML registry with per-actor source/destination allowlists, authority limit and authority currency | Root key can mutate registry; decision path consumes actor configuration | Tests prove source lists load, empty grants deny, agent/literal wildcard denies, trusted operator wildcard use is recorded; AccountRegistry/alias resolution absent |
 | Decision / policy / risk | `DecisionEngine` combines actor authority, policy, risk, nonce claim and receipt | Multiple commits/sessions create records and state | Focused decision/red-team tests; atomicity and failure recovery are not proven |
-| Approval | Approval signature binds transaction hash/request/policy/expiry | Mutates approval request/records and transaction state | Hash, expiry, self-approval tests; caller-supplied approver config/key identity is not fully registry-bound |
-| Signing | Reloads transaction, verifies receipt digest against decision audit evidence and current chain, rechecks controls, signs canonical v2 | Intended sole transaction signer; state update is check-then-write, not CAS | Row-edit and exact-field round-trip tests; whole unsigned database/ledger rewrite remains possible |
-| Simulator | Reloads stored exact amount, verifies hash/signature, conditionally debits/credits integer balances | Executes synthetic transfer and records unique execution | Representative conservation, rejection-no-mutation, replay/signature tests; no property state-machine suite |
+| Approval | Approval binds hash, policy request, expiry, prospective approved version, and approver key from the root-signed identity registry | Approval row/request plus APPROVED transition use one session/CAS; ledger append follows commit | Stale-version, key-substitution, forged-approved-state, duplicate-approval and integration tests; approval DB/audit are not atomic |
+| Signing | Revalidates receipt, policy, authority, approval, signer identity key and authorized row version; signature remains over canonical v2 bytes | Signature/key/signed version and SIGNED transition use row-level CAS | Threaded exactly-one-signer, mutation and authority-chain tests; lifecycle version is stored/evidence-bound but not included in signature bytes |
+| Simulator | Revalidates decision/audit, policy, authority, approval, signer evidence, canonical hash and Ed25519 signature | Balance debit/credit, unique execution row and EXECUTED transition CAS share one SQLite transaction | Exact approval-backed flow, tamper/substitution/replay and concurrent single-settlement tests; process/fault tests and signed checkpoints absent |
 | Audit / attestation | SQLite hash chain; Ed25519 attestation checked against local configured key/live root | Appends audit; generates signed artifact | Ordinary row-tamper and attestation tests; no sequence numbers, append-only triggers, signed checkpoints, or external anchoring |
 | Engineering MCP | `tools/devtools_mcp.py` tools run tests/attacks/bench and read task/invariant docs | Can launch repository commands; no transaction authority | Path jail is used for documentation reads; not a security MCP implementation |
 
@@ -119,8 +121,9 @@ results, not before.
 | Effective allowlist authority | Signed source/destination actor lists, explicit actor authority currency, empty-list deny, agent wildcard deny | Registry, helper, decision, cross-currency and wildcard tests | PARTIAL: account aliases/registry and legacy actor review migration absent |
 | Legacy data conversion | Dry-run/apply exactness migration, quarantine table, backup required, unsigned request fail-closed | Populated SQLite exact/inexact/non-finite fixture, dry-run immutability, idempotence | PARTIAL: not applied to user DB; restore drill and real pre-v2 artifact verification pending |
 | Simulator integer money | `balance_minor` and conditional arithmetic | Representative conservation, rejected no-mutation, replay/signature tests | PARTIAL: generated multi-transfer property/stateful suite absent |
-| State and atomicity | Multiple services/commits; no shared UoW | Three known suite failures; no crash injection | NOT STARTED (M2) |
-| CAS signing | Check then write in gate | No concurrent signer proof | NOT STARTED (M2) |
+| M2.1 authority chain | Decision receipt/hash/version, registry-bound approver/signer keys, approval version, signing CAS, execution verification/CAS | Authority-chain integration and attacker regressions; 207-test full suite | PARTIAL: lifecycle version is not signed as bytes; database/audit not fully atomic |
+| State and atomicity | Decision, nonce, receipt, and audit span multiple commits; no shared decision UoW | No crash injection or process-level contention proof | OPEN (M2.2) |
+| CAS signing/execution | Existing row-level CAS for signing and execution; execution effects share DB transaction | Two-thread exactly-one-winner tests | PARTIAL: process-level races and fault recovery pending |
 | Ledger integrity | Unsequenced hash chain and local attestation | Ordinary tamper detection only | PARTIAL; no signed checkpoint or full-chain rewrite protection |
 | AI provider/evaluation | Ollama client, extraction schema, fixed 10-case AI corpus | Local AI tests and red-team tests | PARTIAL; no provider protocol/CIs/reproducible multi-model harness |
 | Product MCP | No package or tool surface | No MCP-specific security tests | NOT STARTED |
@@ -136,18 +139,19 @@ results, not before.
    before explicit authorization.
 3. Add AccountRegistry and alias/currency model, migrate legacy actor allowlists
    to explicit reviewed grants, and remove remaining hardcoded account literals.
-4. M2: one atomic decision UoW, explicit state transition table, signing CAS,
-   thread/process contention tests, crash injection, monotonic ledger sequence,
-   signed checkpoints and external anchoring.
-5. Fix the three existing hardening test failures; then run T1/T2, Ruff, CI on
-   Python 3.12/3.13, and repeat benchmarks with OS/hardware metadata.
+4. M2.2: atomic decision UoW, process-level contention tests, crash injection,
+   monotonic ledger sequence, signed checkpoints, and external anchoring. Review
+   whether the canonical-signature envelope should bind lifecycle version before
+   changing signature bytes.
+5. Run T1/T2 and CI on Python 3.12/3.13, then repeat benchmarks with OS/hardware
+  metadata; only the focused Ruff check was run for M2.1.
 6. Only after M2, build product MCP, provider/evaluation integration, and release
    packaging in dependency order.
 
 ## Publication Status
 
-Current branch is `m1-money` at `5d9ac23`, tracking `origin/m1-money`; working
-changes are uncommitted. Canonical bytes and vectors changed, so independent
-verifier review and human G6 approval are required. The full suite is not green,
-Ruff is not green, and the unsigned same-database audit limitation remains.
-No commit or push is authorized by this document.
+The M2.1 work started from `m1-money` at `9bde6ca`. No canonical transaction
+bytes, vectors, or signed transaction field set changed. The local full suite
+passes 207 tests; the focused Ruff check passes on the core authority-chain
+modules, while full Ruff/CI were not run. The unsigned same-database audit
+limitation and M2.2 atomicity gaps remain.

@@ -7,25 +7,36 @@ SECURITY PROPERTY:
 - Enforces human approval floor for agent-initiated transactions.
 """
 
-import uuid
 import datetime
 import json
-from typing import Any, Optional
+import uuid
+from typing import Optional
+
 from sqlalchemy.orm import Session
 
-from finguard.core.enums import TransactionState, ActorType, ApprovalState
-from finguard.core.errors import SecurityError, IntegrityError
+from finguard.audit.ledger import AuditLedger
+from finguard.core.canonical import canonical_serialize
+from finguard.core.enums import ActorType, ApprovalState, TransactionState
+from finguard.core.errors import SecurityError
 from finguard.core.state_machine import TransactionStateMachine
 from finguard.core.transaction import Transaction
+from finguard.crypto.hashing import sha256_hash
 from finguard.crypto.keystore import Keystore
 from finguard.crypto.signing import sign_canonical_bytes, verify_signature
-from finguard.crypto.hashing import sha256_hash
-from finguard.core.canonical import canonical_serialize
+from finguard.identity.registry import ActorConfig, IdentityRegistry
 from finguard.policy.engine import PolicyEngine
-from finguard.identity.registry import ActorConfig
 from finguard.storage.database import get_session
-from finguard.storage.models import ApprovalRecord, ApprovalRequestRecord, TransactionRecord, ActorRecord
-from finguard.storage.repositories import ApprovalRepository, TransactionRepository, ActorRepository
+from finguard.storage.models import (
+    ActorRecord,
+    ApprovalRecord,
+    ApprovalRequestRecord,
+)
+from finguard.storage.repositories import (
+    ActorRepository,
+    ApprovalRepository,
+    AuditRepository,
+    TransactionRepository,
+)
 
 
 class ApprovalService:
@@ -59,6 +70,7 @@ class ApprovalService:
                 request_id=f"REQ-{uuid.uuid4().hex[:10].upper()}",
                 transaction_id=transaction.transaction_id,
                 transaction_hash=transaction.transaction_hash(),
+                transaction_version=transaction.revision,
                 required_approvals=required_approvals,
                 current_approvals=0,
                 state=ApprovalState.PENDING.value,
@@ -101,10 +113,23 @@ class ApprovalService:
             if approver.actor_id == tx_rec.actor_id:
                 raise SecurityError("Requester cannot approve its own transaction.")
 
+            trusted_approver = IdentityRegistry().get_actor(approver.actor_id)
+            if not trusted_approver or trusted_approver.actor_type not in (
+                ActorType.APPROVER,
+                ActorType.HUMAN_OPERATOR,
+                ActorType.HUMAN,
+            ):
+                raise SecurityError("Approver identity is not authorized by the signed identity registry.")
+            if not trusted_approver.public_key:
+                raise SecurityError("Approver has no public key bound in the signed identity registry.")
+            if Keystore().get_public_key(key_id) != trusted_approver.public_key:
+                raise SecurityError("Approval key does not match the approver identity.")
+            approver = trusted_approver
+
             # Ensure approver ActorRecord exists in DB for foreign key constraint
             actor_repo = ActorRepository(session)
             if not actor_repo.get(approver.actor_id):
-                actor_repo.save(ActorRecord(
+                session.add(ActorRecord(
                     actor_id=approver.actor_id,
                     actor_type=approver.actor_type.value,
                     display_name=approver.display_name,
@@ -123,32 +148,12 @@ class ApprovalService:
             req = appr_repo.get_request(transaction_id)
 
             if not req:
-                # Reconstruct the Transaction, preferring exact minor units
-                if tx_rec.amount_minor is None:
-                    raise SecurityError("Legacy transaction must be resubmitted before approval")
-                from finguard.money import Money
-                _tx_amount = Money(minor_units=tx_rec.amount_minor, currency=tx_rec.currency)
-                req = self.create_approval_request(
-                    transaction=Transaction(
-                        transaction_id=tx_rec.transaction_id,
-                        actor_id=tx_rec.actor_id,
-                        session_id=tx_rec.session_id,
-                        from_account=tx_rec.from_account,
-                        to_account=tx_rec.to_account,
-                        amount=_tx_amount,
-                        currency=tx_rec.currency,
-                        nonce=tx_rec.nonce,
-                        timestamp=tx_rec.timestamp,
-                        idempotency_key=tx_rec.idempotency_key,
-                        policy_version=tx_rec.policy_version,
-                        metadata=json.loads(tx_rec.metadata_json) if tx_rec.metadata_json else None,
-                    ),
-                    required_approvals=1,
-                    requester_id=tx_rec.actor_id
-                )
+                raise SecurityError("No policy-bound approval request exists for this transaction.")
 
             if req.transaction_hash != tx_rec.canonical_hash:
                 raise SecurityError("Approval request is stale due to transaction mutation.")
+            if req.transaction_version != tx_rec.version:
+                raise SecurityError("Approval request is stale due to transaction version change.")
             policy = PolicyEngine().policy
             policy_hash = sha256_hash(canonical_serialize(policy.model_dump(mode="json")))
             if req.policy_version != str(policy.version) or req.policy_hash != policy_hash:
@@ -163,6 +168,7 @@ class ApprovalService:
             expires_at = now + datetime.timedelta(minutes=30)
             payload = {
                 "transaction_hash": tx_rec.canonical_hash, "request_id": req.request_id,
+                "transaction_version": req.transaction_version + 1,
                 "approver_id": approver.actor_id, "approval_type": "human_approval",
                 "policy_version": req.policy_version, "policy_hash": req.policy_hash,
                 "timestamp": now.isoformat(), "expires_at": expires_at.isoformat(),
@@ -174,6 +180,7 @@ class ApprovalService:
                 approval_id=f"APPR-{uuid.uuid4().hex[:10].upper()}",
                 transaction_id=transaction_id,
                 transaction_hash=tx_rec.canonical_hash,
+                transaction_version=req.transaction_version + 1,
                 request_id=req.request_id,
                 policy_version=req.policy_version,
                 policy_hash=req.policy_hash,
@@ -188,7 +195,7 @@ class ApprovalService:
                 created_at=now,
                 decided_at=now
             )
-            appr_repo.save_approval(approval_record)
+            session.add(approval_record)
 
             # Update count
             existing_approvals = appr_repo.get_approvals(transaction_id)
@@ -198,9 +205,31 @@ class ApprovalService:
             if req.current_approvals >= req.required_approvals:
                 req.state = ApprovalState.APPROVED.value
                 TransactionStateMachine.validate_transition(tx_rec.state, TransactionState.APPROVED)
-                tx_rec.state = TransactionState.APPROVED.value
-                tx_repo.save(tx_rec)
-            appr_repo.save_request(req)
+                if not tx_repo.compare_and_swap_state(
+                    transaction_id,
+                    expected_version=req.transaction_version,
+                    new_state=TransactionState.APPROVED,
+                    commit=False,
+                ):
+                    session.rollback()
+                    raise SecurityError("Transaction version changed while approval was being recorded.")
+            session.add(req)
+            session.commit()
+
+            AuditLedger().append(
+                "APPROVAL",
+                approver.actor_id,
+                transaction_id,
+                "APPROVED",
+                {
+                    "approval_id": approval_record.approval_id,
+                    "request_id": req.request_id,
+                    "transaction_hash": approval_record.transaction_hash,
+                    "transaction_version": approval_record.transaction_version,
+                    "approval_payload_hash": approval_record.approval_payload_hash,
+                    "key_id": approval_record.signing_key_id,
+                },
+            )
 
             return approval_record
         finally:
@@ -216,7 +245,11 @@ class ApprovalService:
         try:
             appr_repo = ApprovalRepository(session)
             req = appr_repo.get_request(transaction.transaction_id)
-            if not req:
+            if not req or req.state != ApprovalState.APPROVED.value:
+                return False
+            if req.transaction_hash != transaction.transaction_hash():
+                return False
+            if transaction.revision != req.transaction_version + 1:
                 return False
 
             policy = PolicyEngine().policy
@@ -227,16 +260,51 @@ class ApprovalService:
             approvals = appr_repo.get_approvals(transaction.transaction_id)
             if not approvals:
                 return False
+            approval_audit_entries = [
+                entry
+                for entry in AuditRepository(session).get_by_transaction(transaction.transaction_id)
+                if entry.action == "APPROVAL"
+            ]
+            approval_audit_by_id = {
+                metadata.get("approval_id"): (entry, metadata)
+                for entry in approval_audit_entries
+                for metadata in [json.loads(entry.metadata_json or "{}")]
+            }
 
             valid = 0
             now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             for appr in approvals:
                 if (appr.transaction_hash != transaction.transaction_hash() or appr.request_id != req.request_id
+                        or appr.transaction_version != transaction.revision
+                        or appr.state != ApprovalState.APPROVED.value
+                        or appr.approval_id not in approval_audit_by_id
                         or appr.policy_version != req.policy_version or appr.policy_hash != req.policy_hash
                         or not appr.expires_at or appr.expires_at < now or not appr.signing_key_id):
                     return False
+                registered_approver = IdentityRegistry().get_actor(appr.approver_id)
+                if (
+                    not registered_approver
+                    or not registered_approver.public_key
+                    or Keystore().get_public_key(appr.signing_key_id) != registered_approver.public_key
+                ):
+                    return False
+                audit_entry = approval_audit_by_id.get(appr.approval_id)
+                if audit_entry is None:
+                    return False
+                audit_record, audit_metadata = audit_entry
+                if (
+                    audit_record.actor_id != appr.approver_id
+                    or audit_record.result != "APPROVED"
+                    or audit_metadata.get("request_id") != req.request_id
+                    or audit_metadata.get("transaction_hash") != appr.transaction_hash
+                    or audit_metadata.get("transaction_version") != appr.transaction_version
+                    or audit_metadata.get("approval_payload_hash") != appr.approval_payload_hash
+                    or audit_metadata.get("key_id") != appr.signing_key_id
+                ):
+                    return False
                 payload = {
                     "transaction_hash": appr.transaction_hash, "request_id": appr.request_id,
+                    "transaction_version": appr.transaction_version,
                     "approver_id": appr.approver_id, "approval_type": appr.approval_type,
                     "policy_version": appr.policy_version, "policy_hash": appr.policy_hash,
                     "timestamp": appr.created_at.isoformat(), "expires_at": appr.expires_at.isoformat(),

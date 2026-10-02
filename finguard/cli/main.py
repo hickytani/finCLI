@@ -322,11 +322,12 @@ def key_list():
 def key_generate(
     key_id: str = typer.Option(None, "--key-id", help="Custom key identifier."),
     passphrase: str = typer.Option(None, "--passphrase", help="Passphrase for non-interactive key generation."),
+    actor_id: str = typer.Option(None, "--actor-id", help="Bind the key to an identity using the root-signed registry."),
 ):
     """Generate a new Ed25519 signing keypair."""
     _ensure_init()
     from finguard.cli.key_commands import do_key_generate
-    do_key_generate(key_id, passphrase)
+    do_key_generate(key_id, passphrase, actor_id)
 
 
 @key_app.command("inspect")
@@ -366,11 +367,12 @@ def identity_register(
     limit: str = typer.Option("10000.00", "--limit", help="Authority limit as decimal text."),
     destinations: str = typer.Option("", "--destinations", help="Comma-separated allowed destinations."),
     root_key: str = typer.Option(..., "--root-key", help="Path to root operator private key."),
+    public_key: str = typer.Option(None, "--public-key", help="Approver public key to bind in the signed identity registry."),
 ):
     """Register a new actor (requires root operator key to re-sign registry)."""
     _ensure_init()
     from finguard.cli.identity_commands import do_identity_register
-    do_identity_register(actor_id, actor_type, display_name, limit, destinations, root_key)
+    do_identity_register(actor_id, actor_type, display_name, limit, destinations, root_key, public_key)
 
 
 # ── Agent Request Commands (Constrained Allowlist) ─────────────────────

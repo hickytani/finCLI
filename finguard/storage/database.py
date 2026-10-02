@@ -76,10 +76,12 @@ def init_db() -> None:
             "amount_minor": "BIGINT",
             "canonical_version": "INTEGER NOT NULL DEFAULT 1",
             "version": "INTEGER NOT NULL DEFAULT 1",
+            "signed_version": "INTEGER",
             "failure_reason": "TEXT",
         },
         "decision_receipts": {
             "canonical_version": "INTEGER NOT NULL DEFAULT 1",
+            "transaction_version": "INTEGER NOT NULL DEFAULT 1",
         },
         "approvals": {
             "request_id": "VARCHAR",
@@ -89,10 +91,12 @@ def init_db() -> None:
             "expires_at": "DATETIME",
             "signing_key_id": "VARCHAR",
             "approval_payload_hash": "VARCHAR",
+            "transaction_version": "INTEGER NOT NULL DEFAULT 1",
         },
         "approval_requests": {
             "policy_version": "VARCHAR",
             "policy_hash": "VARCHAR",
+            "transaction_version": "INTEGER NOT NULL DEFAULT 1",
         },
         # Incident lifecycle additions
         "incidents": {

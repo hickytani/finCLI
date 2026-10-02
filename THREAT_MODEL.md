@@ -9,9 +9,14 @@ The central security question FIN//GUARD investigates is:
 
 The current implementation applies deterministic identity, authority, policy,
 replay, approval, signing, and simulator checks on its implemented local
-CLI/SDK path. This is not a proof of a universal **NO**. Decision writes are not
-atomic, signing is not protected by CAS, the hash ledger has no signed
-checkpoint, no product MCP server exists, and an attacker able to rewrite the
+CLI/SDK path. The decision/approval/signing/execution chain now carries the
+canonical v2 transaction hash and persisted lifecycle-version evidence; approval
+and signer keys must match public keys in the root-signed identity registry.
+This is not a proof of a universal **NO**. Decision writes are not one atomic
+unit, audit appends remain outside their corresponding state commits, signatures
+still cover canonical v2 bytes rather than a lifecycle-version envelope, the
+hash ledger has no signed checkpoint, process-level race/fault injection is
+pending, no product MCP server exists, and an attacker able to rewrite the
 entire SQLite file can recompute its unkeyed ledger chain. Claims must remain
 limited to behaviors with passing tests and measured evaluation evidence.
 
@@ -22,8 +27,8 @@ limited to behaviors with passing tests and measured evaluation evidence.
 | Actor Type | ID / Scope | Trust Level | Capabilities & Controls |
 | :--- | :--- | :--- | :--- |
 | **`AGENT`** | Autonomous LLM / Tool-Calling Process | **UNTRUSTED** | Can ONLY invoke `finguard agent-request ...`. Cannot sign transactions, approve transactions, or modify identities. Subject to mandatory human approval floor. |
-| **`HUMAN_OPERATOR`** | Human Security / Treasury Operator | **TRUSTED (Constrained)** | Can invoke full operator CLI, sign transactions within authority limits, approve agent requests. Cannot bypass policy or tampering detection. |
-| **`APPROVER`** | Designated Approver | **HIGH TRUST** | Can cryptographically approve pending transactions. Approval binds Ed25519 signature to `transaction_hash`. |
+| **`HUMAN_OPERATOR`** | Human Security / Treasury Operator | **TRUSTED (Constrained)** | Can invoke full operator CLI; signing key must match this actor's public key in the root-signed registry. Cannot bypass policy or transaction CAS. |
+| **`APPROVER`** | Designated Approver | **HIGH TRUST** | Can approve pending transactions only with the actor-bound registry key. Ed25519 approval binds transaction hash, request, policy identity, expiry, and target approved version. |
 | **`ROOT_OPERATOR`** | Offline Root Authority | **ROOT TRUST** | Holds root operator key (`root_operator.key`) to re-sign identity & authority registry (`identities.yaml.sig`). |
 
 ---
@@ -68,6 +73,13 @@ limited to behaviors with passing tests and measured evaluation evidence.
 
 4. **Signed Attestation Artifact**:
    `finguard attest generate` produces a signed `AttestationReport` JSON artifact signed by an Ed25519 attestor key, allowing third parties to independently verify ledger integrity via `finguard attest verify`.
+
+   5. **Transaction Authority Chain**:
+      - Transaction identity is the existing canonical v2 SHA-256 hash; no second transaction serializer is introduced.
+      - The policy receipt records that hash and its lifecycle row version. Approval requests bind the same hash/version; approval signatures bind the prospective `APPROVED` row version and the signed-registry approver key.
+      - Signing rechecks receipt, current policy/authority, approval evidence, signer registry key, and the exact row version being consumed; the signature remains over canonical v2 bytes. Its `signed_version` is recorded with the signature/key in a row-level CAS.
+      - Execution revalidates receipt, decision audit, policy, authority, approval evidence when required, signer audit/key, canonical hash, and signature. Balance debit/credit, execution uniqueness record, and `SIGNED -> EXECUTED` CAS share one SQLite transaction. Replays are rejected.
+      - Decision+nonce+receipt+ledger and later audit appends are not a single UoW. Version is not part of signature bytes pending security review. The ledger is not checkpoint-signed or externally anchored.
 
 ---
 

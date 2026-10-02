@@ -53,6 +53,7 @@ class TransactionRecord(Base):
     canonical_hash = Column(String, nullable=True)
     signature = Column(String, nullable=True)
     signing_key_id = Column(String, nullable=True)
+    signed_version = Column(Integer, nullable=True)
     policy_version = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
@@ -71,6 +72,7 @@ class ApprovalRecord(Base):
     approval_id = Column(String, primary_key=True)
     transaction_id = Column(String, ForeignKey("transactions.transaction_id"), nullable=False)
     transaction_hash = Column(String, nullable=False)
+    transaction_version = Column(Integer, nullable=False, default=1)
     request_id = Column(String, nullable=True)
     policy_version = Column(String, nullable=True)
     policy_hash = Column(String, nullable=True)
@@ -99,6 +101,7 @@ class ApprovalRequestRecord(Base):
     transaction_id = Column(String, ForeignKey("transactions.transaction_id"),
                             nullable=False, unique=True)
     transaction_hash = Column(String, nullable=False)
+    transaction_version = Column(Integer, nullable=False, default=1)
     policy_version = Column(String, nullable=True)
     policy_hash = Column(String, nullable=True)
     required_approvals = Column(Integer, nullable=False, default=1)
@@ -178,6 +181,7 @@ class DecisionReceiptRecord(Base):
     receipt_id = Column(String, primary_key=True)
     transaction_id = Column(String, ForeignKey("transactions.transaction_id"), nullable=False)
     transaction_hash = Column(String, nullable=False)
+    transaction_version = Column(Integer, nullable=False, default=1)
     canonical_version = Column(Integer, nullable=False, default=1)
     actor_id = Column(String, nullable=True)
     session_id = Column(String, nullable=True)

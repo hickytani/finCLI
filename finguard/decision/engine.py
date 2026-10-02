@@ -26,12 +26,17 @@ from finguard.policy.engine import PolicyEngine
 from finguard.risk.engine import RiskEngine
 from finguard.storage.database import get_session
 from finguard.storage.models import ActorRecord, DecisionReceiptRecord, TransactionRecord
-from finguard.storage.repositories import ActorRepository, NonceRepository, ReceiptRepository, TransactionRepository
+from finguard.storage.repositories import (
+    ActorRepository,
+    ReceiptRepository,
+    TransactionRepository,
+)
 
 
 class DecisionReceipt(BaseModel):
     receipt_version: str = "2.0"
     canonical_version: int = 2
+    transaction_version: int = 1
     receipt_id: str = Field(default_factory=lambda: f"RCT-{uuid.uuid4().hex[:12].upper()}")
     transaction_id: str
     transaction_hash: str
@@ -73,8 +78,55 @@ class DecisionEngine:
         self.registry = registry or IdentityRegistry()
         self.policy_engine = policy_engine or PolicyEngine()
 
+    @staticmethod
+    def _existing_idempotent_result(transaction: Transaction) -> DecisionResult | None:
+        if not transaction.idempotency_key:
+            return None
+
+        session = get_session()
+        try:
+            transaction_record = TransactionRepository(session).get_by_idempotency_key(
+                transaction.idempotency_key
+            )
+            if transaction_record is None:
+                return None
+            if (
+                transaction_record.transaction_id != transaction.transaction_id
+                or transaction_record.canonical_hash != transaction.transaction_hash()
+            ):
+                raise ValueError("Idempotency key was reused for a different transaction payload")
+
+            receipt_record = ReceiptRepository(session).get_by_transaction(
+                transaction_record.transaction_id
+            )
+            if receipt_record is None:
+                raise ValueError("Idempotent transaction has no committed decision receipt")
+            receipt = DecisionReceipt.model_validate_json(receipt_record.reason)
+            if (
+                receipt.transaction_id != transaction_record.transaction_id
+                or receipt.transaction_hash != transaction_record.canonical_hash
+                or receipt_record.receipt_hash != receipt.receipt_hash()
+            ):
+                raise ValueError("Idempotent decision evidence failed integrity validation")
+
+            transaction.state = TransactionState(transaction_record.state)
+            transaction.revision = transaction_record.version
+            transaction.signature = transaction_record.signature
+            transaction.signing_key_id = transaction_record.signing_key_id
+            return DecisionResult(
+                decision=DecisionType(receipt.final_decision),
+                transaction=transaction,
+                receipt=receipt,
+            )
+        finally:
+            session.close()
+
     def decide(self, transaction: Transaction, ai_assessment: dict[str, Any] | None = None) -> DecisionResult:
         """Fail closed for every invalid identity, replay, persistence, or evaluator error."""
+        existing_result = self._existing_idempotent_result(transaction)
+        if existing_result is not None:
+            return existing_result
+
         actor = None
         reasons: list[str] = []
         try:
@@ -88,6 +140,7 @@ class DecisionEngine:
 
             policy_hash = sha256_hash(canonical_serialize(self.policy_engine.policy.model_dump(mode="json")))
             from decimal import Decimal
+
             from finguard.money import Money
             _authority_currency = actor.authority_currency
             _currency_str = transaction.currency.value
@@ -195,15 +248,23 @@ class DecisionEngine:
             if decision == DecisionType.REQUIRE_APPROVAL:
                 ApprovalService().create_approval_request(transaction, policy.required_approvals, transaction.actor_id)
                 approval_state = "pending"
-            self._set_state(transaction.transaction_id, state)
-            receipt = DecisionReceipt(transaction_id=transaction.transaction_id, canonical_version=2, transaction_hash=transaction.transaction_hash(), actor_id=actor.actor_id, actor_type=actor.actor_type.value, amount=transaction.money.to_decimal_string(), amount_minor=transaction.amount_minor, currency=transaction.currency.value, destination=transaction.to_account, authority_allowed=authority_allowed, authority_reasons=authority_reasons, policy_id=policy.policy_id, policy_version=str(policy.policy_version), policy_hash=policy_hash, deterministic_risk=risk.model_dump(mode="json"), ai_assessment=ai_assessment or {"status": "NOT_PROVIDED"}, approval_requirement=policy.required_approvals, approval_state=approval_state, final_decision=decision.value, reasons=reasons)
+            persisted_version = self._set_state(transaction.transaction_id, state)
+            if persisted_version is not None:
+                transaction.revision = persisted_version
+            receipt = DecisionReceipt(transaction_id=transaction.transaction_id, canonical_version=2, transaction_version=transaction.revision, transaction_hash=transaction.transaction_hash(), actor_id=actor.actor_id, actor_type=actor.actor_type.value, amount=transaction.money.to_decimal_string(), amount_minor=transaction.amount_minor, currency=transaction.currency.value, destination=transaction.to_account, authority_allowed=authority_allowed, authority_reasons=authority_reasons, policy_id=policy.policy_id, policy_version=str(policy.policy_version), policy_hash=policy_hash, deterministic_risk=risk.model_dump(mode="json"), ai_assessment=ai_assessment or {"status": "NOT_PROVIDED"}, approval_requirement=policy.required_approvals, approval_state=approval_state, final_decision=decision.value, reasons=reasons)
         except Exception as exc:
             # Never convert an exception to ALLOW. A receipt is still emitted where possible.
             transaction.state = TransactionState.BLOCKED
             reason = f"FAIL_CLOSED: {type(exc).__name__}: {exc}"
             receipt = DecisionReceipt(transaction_id=transaction.transaction_id, canonical_version=2, transaction_hash=transaction.transaction_hash(), actor_id=transaction.actor_id, actor_type=actor.actor_type.value if actor else None, amount=transaction.money.to_decimal_string(), amount_minor=transaction.amount_minor, currency=transaction.currency.value, destination=transaction.to_account, authority_allowed=False, authority_reasons=[reason], policy_integrity="UNKNOWN", ai_assessment=ai_assessment or {"status": "NOT_PROVIDED"}, final_decision=DecisionType.BLOCK.value, reasons=[reason])
             decision = DecisionType.BLOCK
-            self._set_state(transaction.transaction_id, TransactionState.BLOCKED, tolerate_missing=True)
+            persisted_version = self._set_state(
+                transaction.transaction_id,
+                TransactionState.BLOCKED,
+                tolerate_missing=True,
+            )
+            if persisted_version is not None:
+                transaction.revision = persisted_version
         # Unknown identities cannot satisfy the receipt table's transaction FK;
         # audit still records the attempted decision without inventing an actor.
         try:
@@ -211,26 +272,46 @@ class DecisionEngine:
         except Exception:
             decision = DecisionType.BLOCK
         try:
-            AuditLedger().append("DECISION", transaction.actor_id, transaction.transaction_id, receipt.final_decision.upper(), {"receipt_id": receipt.receipt_id, "receipt_hash": receipt.receipt_hash(), "reasons": receipt.reasons})
+            AuditLedger().append(
+                "DECISION",
+                transaction.actor_id,
+                transaction.transaction_id,
+                receipt.final_decision.upper(),
+                {
+                    "receipt_id": receipt.receipt_id,
+                    "receipt_hash": receipt.receipt_hash(),
+                    "transaction_hash": receipt.transaction_hash,
+                    "transaction_version": receipt.transaction_version,
+                    "policy_version": receipt.policy_version,
+                    "reasons": receipt.reasons,
+                },
+            )
         except Exception:
             # Audit is evidence-bearing: retain fail-closed decision even if the evidence store failed.
             decision = DecisionType.BLOCK
         return DecisionResult(decision=decision, transaction=transaction, receipt=receipt)
 
     @staticmethod
-    def _set_state(transaction_id: str, state: TransactionState, tolerate_missing: bool = False) -> None:
+    def _set_state(
+        transaction_id: str,
+        state: TransactionState,
+        tolerate_missing: bool = False,
+    ) -> int | None:
         session = get_session()
         try:
             record = TransactionRepository(session).get(transaction_id)
             if record:
+                expected_version = record.version
                 if not TransactionRepository(session).compare_and_swap_state(
                     transaction_id,
-                    expected_version=record.version,
+                    expected_version=expected_version,
                     new_state=state,
                 ):
                     raise ValueError("Transaction state CAS failed")
+                return expected_version + 1
             elif not tolerate_missing:
                 raise ValueError("Transaction persistence failure")
+            return None
         finally:
             session.close()
 
@@ -239,6 +320,6 @@ class DecisionEngine:
         session = get_session()
         try:
             latest = ReceiptRepository(session).get_latest()
-            ReceiptRepository(session).save(DecisionReceiptRecord(receipt_id=receipt.receipt_id, transaction_id=receipt.transaction_id, transaction_hash=receipt.transaction_hash, canonical_version=receipt.canonical_version, actor_id=receipt.actor_id, policy_id=receipt.policy_id, policy_version=receipt.policy_version, matched_rules=json.dumps(receipt.reasons), security_signals=json.dumps(receipt.deterministic_risk), risk_score=receipt.deterministic_risk.get("risk_score"), risk_level=receipt.deterministic_risk.get("risk_level"), approval_state=receipt.approval_state, decision=receipt.final_decision, reason=json.dumps(receipt.model_dump(mode="json"), sort_keys=True), timestamp=receipt.timestamp.replace(tzinfo=None), previous_receipt_hash=latest.receipt_hash if latest else None, receipt_hash=receipt.receipt_hash()))
+            ReceiptRepository(session).save(DecisionReceiptRecord(receipt_id=receipt.receipt_id, transaction_id=receipt.transaction_id, transaction_hash=receipt.transaction_hash, transaction_version=receipt.transaction_version, canonical_version=receipt.canonical_version, actor_id=receipt.actor_id, policy_id=receipt.policy_id, policy_version=receipt.policy_version, matched_rules=json.dumps(receipt.reasons), security_signals=json.dumps(receipt.deterministic_risk), risk_score=receipt.deterministic_risk.get("risk_score"), risk_level=receipt.deterministic_risk.get("risk_level"), approval_state=receipt.approval_state, decision=receipt.final_decision, reason=json.dumps(receipt.model_dump(mode="json"), sort_keys=True), timestamp=receipt.timestamp.replace(tzinfo=None), previous_receipt_hash=latest.receipt_hash if latest else None, receipt_hash=receipt.receipt_hash()))
         finally:
             session.close()

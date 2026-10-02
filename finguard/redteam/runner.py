@@ -179,6 +179,15 @@ class RedTeamRunner:
                 keystore.get_public_key(key_id)
             except Exception:
                 keystore.create_keypair(key_id, self.KEY_PASSWORD)
+        registry = IdentityRegistry()
+        approver = registry.get_actor("approver-1")
+        if approver and approver.public_key != keystore.get_public_key(self.APPROVER_KEY):
+            approver.public_key = keystore.get_public_key(self.APPROVER_KEY)
+            registry.register_actor(approver, registry.root_priv_path)
+        operator = IdentityRegistry().get_actor("operator-1")
+        if operator and operator.public_key != keystore.get_public_key(self.OPERATOR_KEY):
+            operator.public_key = keystore.get_public_key(self.OPERATOR_KEY)
+            IdentityRegistry().register_actor(operator, IdentityRegistry().root_priv_path)
 
     def _approve(self, tx: Transaction) -> None:
         ApprovalService().approve_transaction(tx.transaction_id, IdentityRegistry().get_actor("approver-1"), self.APPROVER_KEY, self.KEY_PASSWORD)

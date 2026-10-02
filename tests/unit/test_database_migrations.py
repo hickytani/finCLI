@@ -20,6 +20,8 @@ def test_existing_rows_gain_minor_units_and_legacy_v1_version(tmp_path, monkeypa
         connection.execute(
             "CREATE TABLE decision_receipts (receipt_id TEXT PRIMARY KEY)"
         )
+        connection.execute("CREATE TABLE approvals (approval_id TEXT PRIMARY KEY)")
+        connection.execute("CREATE TABLE approval_requests (request_id TEXT PRIMARY KEY)")
         connection.execute("INSERT INTO transactions VALUES ('legacy-tx', 12.34)")
         connection.execute("INSERT INTO decision_receipts VALUES ('legacy-receipt')")
 
@@ -37,9 +39,20 @@ def test_existing_rows_gain_minor_units_and_legacy_v1_version(tmp_path, monkeypa
         receipt_columns = {
             row[1]: row for row in connection.execute("PRAGMA table_info(decision_receipts)")
         }
+        approval_columns = {
+            row[1]: row for row in connection.execute("PRAGMA table_info(approvals)")
+        }
+        request_columns = {
+            row[1]: row for row in connection.execute("PRAGMA table_info(approval_requests)")
+        }
         assert "amount_minor" in transaction_columns
         assert transaction_columns["canonical_version"][4] == "1"
+        assert "version" in transaction_columns
+        assert "signed_version" in transaction_columns
         assert "canonical_version" in receipt_columns
+        assert "transaction_version" in receipt_columns
+        assert "transaction_version" in approval_columns
+        assert "transaction_version" in request_columns
         assert connection.execute(
             "SELECT canonical_version FROM transactions WHERE transaction_id='legacy-tx'"
         ).fetchone() == (1,)

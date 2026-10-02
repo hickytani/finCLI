@@ -69,7 +69,8 @@ def do_identity_register(
     display_name: str,
     limit: str,
     destinations: str,
-    root_key: str
+    root_key: str,
+    public_key: str | None = None,
 ):
     """Register a new actor in identity registry (requires root key)."""
     registry = IdentityRegistry()
@@ -84,7 +85,8 @@ def do_identity_register(
         authority_limit=limit,
         allowed_destinations=dest_list,
         active=True,
-        session_binding_required=(actor_type.lower() == "agent")
+        session_binding_required=(actor_type.lower() == "agent"),
+        public_key=public_key,
     )
 
     registry.register_actor(actor_config, root_key_path)

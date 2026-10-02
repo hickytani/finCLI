@@ -96,13 +96,14 @@ def test_maker_checker_self_approval_rejected(clean_db):
         )
 
 
-def test_maker_checker_duplicate_approval_by_same_approver_rejected(clean_db):
+def test_maker_checker_duplicate_approval_by_same_approver_rejected(clean_db, bind_actor_key):
     """INVARIANT: The same approver cannot approve the same transaction twice to bypass required counts."""
     ks = Keystore()
     try:
         ks.create_keypair("appr-key", "pass123")
     except Exception:
         pass
+    approver = bind_actor_key("approver-1", "appr-key")
 
     tx = Transaction(
         actor_id="operator-1",
@@ -114,13 +115,6 @@ def test_maker_checker_duplicate_approval_by_same_approver_rejected(clean_db):
     res = DecisionEngine().decide(tx)
     # Ensure the decision went through (may be ALLOW or REQUIRE_APPROVAL)
     assert res.decision in (DecisionType.ALLOW, DecisionType.REQUIRE_APPROVAL, DecisionType.BLOCK)
-
-    approver = ActorConfig(
-        actor_id="approver-1",
-        actor_type=ActorType.APPROVER,
-        display_name="Bob Approver",
-        authority_limit=1000000.0
-    )
 
     appr_service = ApprovalService()
     # First approval succeeds

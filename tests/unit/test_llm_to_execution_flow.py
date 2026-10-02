@@ -28,7 +28,7 @@ def _agent_with_model_output(output):
     return TreasuryAgent(analyzer=LocalAIAnalyzer(FixedModel(output)))
 
 
-def test_validated_llm_request_requires_human_then_reaches_simulator():
+def test_validated_llm_request_requires_human_then_reaches_simulator(bind_actor_key):
     agent = _agent_with_model_output({
         "amount": 5000, "currency": "INR", "destination": "vendor-a", "purpose": "invoice 4471",
         "analysis": {"risk_level": "low", "confidence": 0.9, "signals": [], "reason": "explicit payment"},
@@ -39,8 +39,10 @@ def test_validated_llm_request_requires_human_then_reaches_simulator():
     keys = Keystore()
     keys.create_keypair("approver-key", "test-password")
     keys.create_keypair("operator-key", "test-password")
+    approver = bind_actor_key("approver-1", "approver-key")
+    bind_actor_key("operator-1", "operator-key")
     ApprovalService().approve_transaction(
-        response["transaction_id"], IdentityRegistry().get_actor("approver-1"), "approver-key", "test-password"
+        response["transaction_id"], approver, "approver-key", "test-password"
     )
     SigningGate().sign(response["transaction_id"], "operator-key", "test-password")
     settlement = FinancialSimulator().execute(response["transaction_id"])

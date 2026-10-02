@@ -255,6 +255,10 @@ class ScenarioLoader:
                             keystore.get_public_key(key_id)
                         except Exception:
                             keystore.create_keypair(key_id, passw)
+                        if approver_actor.public_key != keystore.get_public_key(key_id):
+                            approver_actor.public_key = keystore.get_public_key(key_id)
+                            registry.register_actor(approver_actor, registry.root_priv_path)
+                            approver_actor = registry.validate_actor("approver-1")
 
                         approval_service.approve_transaction(
                             transaction_id=tx_obj.transaction_id,

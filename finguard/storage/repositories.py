@@ -12,16 +12,23 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
-from sqlalchemy import and_, or_, func, update
+from sqlalchemy import and_, func, or_, update
 from sqlalchemy.orm import Session
 
 from finguard.core.enums import Currency, TransactionState
 from finguard.core.errors import MoneyError
 from finguard.money import get_currency_exponent
 from finguard.storage.models import (
-    ActorRecord, TransactionRecord, ApprovalRecord, ApprovalRequestRecord,
-    AuditEntryRecord, IncidentRecord, SecuritySignalRecord,
-    DecisionReceiptRecord, KeyRecord, NonceRecord,
+    ActorRecord,
+    ApprovalRecord,
+    ApprovalRequestRecord,
+    AuditEntryRecord,
+    DecisionReceiptRecord,
+    IncidentRecord,
+    KeyRecord,
+    NonceRecord,
+    SecuritySignalRecord,
+    TransactionRecord,
 )
 
 # Maximum rows any single investigation query may return without explicit override.
@@ -86,16 +93,27 @@ class TransactionRepository:
         *,
         expected_version: int,
         new_state: str | TransactionState,
+        values: dict | None = None,
+        commit: bool = True,
     ) -> bool:
         """Row-level CAS update: only one worker can win on the expected version."""
         normalized_state = TransactionState(new_state).value if isinstance(new_state, TransactionState) else str(new_state)
+        update_values = dict(values or {})
+        update_values.update({
+            "state": normalized_state,
+            "version": expected_version + 1,
+        })
         result = self.session.execute(
             update(TransactionRecord)
             .where(TransactionRecord.transaction_id == transaction_id)
             .where(TransactionRecord.version == expected_version)
-            .values(state=normalized_state, version=expected_version + 1)
+            .values(**update_values)
         )
-        self.session.commit()
+        if commit:
+            if result.rowcount == 1:
+                self.session.commit()
+            else:
+                self.session.rollback()
         return result.rowcount == 1
 
     def save(self, record: TransactionRecord) -> None:

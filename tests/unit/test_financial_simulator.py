@@ -16,7 +16,7 @@ def _operator_transaction(amount="500.00"):
     )
 
 
-def test_only_signed_transaction_can_move_synthetic_money():
+def test_only_signed_transaction_can_move_synthetic_money(bind_actor_key):
     simulator = FinancialSimulator()
     before = {item["account_id"]: item["balance_minor"] for item in simulator.balances()}
     result = DecisionEngine().decide(_operator_transaction())
@@ -25,6 +25,7 @@ def test_only_signed_transaction_can_move_synthetic_money():
     assert {item["account_id"]: item["balance_minor"] for item in simulator.balances()} == before
 
     Keystore().create_keypair("operator-key", "test-password")
+    bind_actor_key("operator-1", "operator-key")
     SigningGate().sign(result.transaction.transaction_id, "operator-key", "test-password")
     settlement = simulator.execute(result.transaction.transaction_id)
     after = {item["account_id"]: item["balance_minor"] for item in simulator.balances()}
@@ -38,20 +39,22 @@ def test_only_signed_transaction_can_move_synthetic_money():
     assert sum(after.values()) == sum(before.values())
 
 
-def test_simulator_rejects_replayed_execution():
+def test_simulator_rejects_replayed_execution(bind_actor_key):
     simulator = FinancialSimulator()
     result = DecisionEngine().decide(_operator_transaction())
     Keystore().create_keypair("operator-key", "test-password")
+    bind_actor_key("operator-1", "operator-key")
     SigningGate().sign(result.transaction.transaction_id, "operator-key", "test-password")
     simulator.execute(result.transaction.transaction_id)
     with pytest.raises(SimulatorError, match="signed transaction"):
         simulator.execute(result.transaction.transaction_id)
 
 
-def test_simulator_rechecks_transaction_signature_before_execution():
+def test_simulator_rechecks_transaction_signature_before_execution(bind_actor_key):
     simulator = FinancialSimulator()
     result = DecisionEngine().decide(_operator_transaction())
     Keystore().create_keypair("operator-key", "test-password")
+    bind_actor_key("operator-1", "operator-key")
     SigningGate().sign(result.transaction.transaction_id, "operator-key", "test-password")
     from finguard.storage.database import get_session
     from finguard.storage.repositories import TransactionRepository
