@@ -1,52 +1,51 @@
-# FIN//GUARD Master Task Backlog
+# FIN//GUARD Master Task Backlog (Prompt v2: M0 - M6)
 
 ## Status Legend
 - `[ ]` Pending
 - `[-]` In Progress
 - `[x]` Completed
 
-## Backlog
+## Milestone Roadmap
 
-### Day 1 - Project Hygiene & Baseline Hardening
-- [x] Baseline setup, ruff cleanup, test matrix, branch coverage setup
-- [x] Initial architecture documentation (`docs/ARCHITECTURE.md`)
-- [x] Initial invariants specification (`docs/INVARIANTS.md`)
-- [x] Appendix A vulnerability catalog regression tests (`tests/unit/test_redteam_hardening_pass.py`)
-- [x] Performance baseline benchmark script (`scripts/bench.py`)
+### M0 - Mission Control (FG-001)
+- [x] AGENTS.md v2 prompt integrated as single source of truth.
+- [x] Reproducible defect proof suite created: `tests/regression/test_baseline_findings.py` (FG-201..FG-206).
+- [x] DevTools MCP server implemented: `tools/devtools_mcp.py` (`run_tests`, `run_attacks`, `run_bench`, `invariant_status`, `list_open_tickets`).
+- [x] Makefile with targets (`watch`, `t0`, `t1`, `t2`, `t3`, `attack`, `attack-loop`, `bench`, `migrate-dry`, `docs`).
+- [x] Invariants matrix updated to I1-I14 in `docs/INVARIANTS.md`.
+- [x] Baseline performance benchmark script (`scripts/bench.py`) committed.
 
-### Day 2 - Money Correctness & Identity Registry (F1, F2)
-- [ ] F1: Introduce `Money(minor_units: int, currency: Currency)` decimal string representation ("500.00").
-- [ ] F1: Per-currency exponent table, reject excess precision.
-- [ ] F1: Canonical serialization v2 with integers/strings & domain-separated prefix (`finguard.tx.v2\0`).
-- [ ] F1: Read-only legacy v1 verification path for existing receipts/signatures.
-- [ ] F1: Property-based tests (Hypothesis) for money roundtrip, float rejection test.
-- [ ] F2: Remove hardcoded `"rahul"` and `"treasury"` identifiers from `ai/schemas.py` and `decision/engine.py`.
-- [ ] F2: AccountRegistry resolving alias -> account id (unresolved -> BLOCK with UNRESOLVED_ACCOUNT).
-- [ ] F2: Source-account authority from `allowed_source_accounts` in identity registry.
-- [ ] F2: Reject confusables, zero-width, mixed-script identifiers; require NFC.
+### M1 - Money and Authority (FG-201, FG-202, FG-203, FG-204, FG-205, FG-206)
+- [ ] FG-201/202: `Money(minor: int, currency: Currency)` class + per-currency exponent table.
+- [ ] FG-201/202: Reject excess precision, NaN, Infinity, negative, zero, bool-as-number at boundary.
+- [ ] FG-201/202: Canonical v2 serialization (`finguard.tx.v2\x00` domain prefix, `amount_minor` integer).
+- [ ] FG-201/202: Legacy v1 read-only verification path & golden test vectors.
+- [ ] FG-201/202: AST test `test_no_float_money` enforcing 0 float in money paths.
+- [ ] FG-203/204: `AccountRegistry` (`accounts` table, alias resolution, NFC/NFKC validation, confusable rejection).
+- [ ] FG-203/204: Deny-by-default `Authority` (`allowed_destinations`, `allowed_source_accounts`).
+- [ ] FG-203/204: Remove `"rahul"` and `"treasury"` hardcoded literals.
+- [ ] FG-205: Simulator balances in minor units (integer math, conservation invariant property test).
+- [ ] FG-206: RFC 0001 (`docs/rfcs/0001-bind-metadata.md`) & `metadata_digest` binding in canonical v2.
 
-### Day 3 - Concurrency, State Machine & Ledger Integrity (F3, F4, F5)
-- [ ] F3: Atomic decision unit of work (nonce claim + receipt + state change + ledger append commit together).
-- [ ] F3: Injected session / Unit-of-work in decision & signing paths; remove global `get_session()` calls.
-- [ ] F4: Compare-and-swap (CAS) signing gate (`UPDATE ... WHERE state = expected`).
-- [ ] F4: Concurrency test suite (50 parallel sign attempts -> exactly 1 succeeds).
-- [ ] F5: Monotonic sequence `seq` with `UNIQUE(seq)` and `UNIQUE(prev_hash)` in ledger.
-- [ ] F5: Periodic and on-demand signed checkpoints `{seq, head_hash, ts, key_id, signature}`.
-- [ ] F5: Ledger audit verify with chain and checkpoint validation (200 parallel appends gap-free).
+### M2 - Integrity and Atomicity (FG-301, FG-302, FG-303, FG-304)
+- [ ] FG-301: Atomic Unit of Work for decision pipeline (single session, `BEGIN IMMEDIATE`, SQLite WAL).
+- [ ] FG-302: CAS signing gate (`UPDATE ... WHERE state = expected`).
+- [ ] FG-303: Monotonic `seq` ledger, SQLite triggers, signed checkpoints `{seq, head_hash, ts, key_id, signature}`.
+- [ ] FG-304: Unified aware-UTC `Clock` service; remove naive `_utcnow()` shim.
 
-### Day 4 - LLM Layer & Evaluation Harness (F6)
-- [ ] F6: `LLMProvider` protocol (Ollama & OpenAI-compatible HTTP implementations).
-- [ ] F6: Eval harness with benign set + attack catalog (N >= 30 variants per category).
-- [ ] F6: Reproducible multi-model report (`docs/RESULTS.md`) with Wilson 95% CIs.
+### M3 - LLM Provider Layer & Evaluation Harness (FG-401)
+- [ ] FG-401: `LLMProvider` protocol (Ollama & OpenAI-compatible HTTP providers).
+- [ ] FG-401: Evaluation harness (benign + attack catalog with >= 30 variants per category).
+- [ ] FG-401: Multi-model evaluation report (`docs/RESULTS.md`) with Wilson 95% CIs.
 
-### Day 5 - MCP Server Implementation (F7)
-- [ ] F7: FastMCP package `finguard.mcp` exposing ONLY `propose_transaction`, `get_decision`, `list_transactions`, `get_audit_proof`.
-- [ ] F7: Server-side actor binding, tool description poisoning defense, MCP security test suite.
+### M4 - FIN//GUARD MCP Server (FG-501)
+- [ ] FG-501: FastMCP package `finguard.mcp` exposing ONLY `propose_transaction`, `get_decision`, `list_transactions`, `get_audit_proof`.
+- [ ] FG-501: Structural import isolation & server-side identity binding.
 
-### Day 6 - Signer Abstraction & Guardrail Comparison (F8)
-- [ ] F8: `Signer` interface, `KmsSignerStub` implementation.
-- [ ] F8: Guardrail benchmark comparison (NeMo, LLM Guard, Llama Guard vs FIN//GUARD).
+### M5 - Comparison and Signer Abstraction (FG-601, FG-602)
+- [ ] FG-601: `Signer` interface and `KmsSignerStub`.
+- [ ] FG-602: Comparative benchmark vs NeMo Guardrails, LLM Guard, Llama Guard.
 
-### Day 7 - Release & Recruiter Packaging (F9)
-- [ ] F9: PyPI release 0.2.0 packaging, CHANGELOG, SECURITY.md, docs/CASE_STUDY.md, demo script.
-- [ ] F9: Final honest README audit with reproducible commands & measured numbers.
+### M6 - Release Engineering & Recruiter Packaging (FG-701)
+- [ ] FG-701: PyPI v0.2.0 packaging, CHANGELOG, SECURITY.md, SBOM (CycloneDX), Scorecard.
+- [ ] FG-701: `docs/CASE_STUDY.md`, 3-minute demo script, README audit with measured numbers.
