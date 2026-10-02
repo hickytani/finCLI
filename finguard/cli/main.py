@@ -64,6 +64,7 @@ incident_app = typer.Typer(help="Security incident management.")
 decision_app = typer.Typer(help="Central authorization decision receipts.")
 agent_app = typer.Typer(help="Untrusted treasury agent orchestration.")
 simulator_app = typer.Typer(help="Local-only virtual financial system controlled by FinGuard.")
+investigate_app = typer.Typer(help="Forensic investigation: incidents, events, actors, timelines.")
 
 app.add_typer(key_app, name="key")
 app.add_typer(identity_app, name="identity")
@@ -80,6 +81,103 @@ app.add_typer(incident_app, name="incident")
 app.add_typer(decision_app, name="decision")
 app.add_typer(agent_app, name="agent")
 app.add_typer(simulator_app, name="simulator")
+app.add_typer(investigate_app, name="investigate")
+
+
+# ── Investigate commands ───────────────────────────────────────────────
+from finguard.cli.investigation_commands import (  # noqa: E402
+    do_incident_trace,
+    do_tx_trace,
+    do_event_search,
+    do_actor_profile,
+    do_incident_timeline,
+    do_incident_transition,
+)
+
+
+@investigate_app.command("incident-trace")
+def investigate_incident_trace(
+    incident_id: str = typer.Argument(help="Incident ID to trace."),
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Full forensic trace: incident → transaction → signals → receipt → audit."""
+    _ensure_init()
+    do_incident_trace(incident_id, output_json=json_out)
+
+
+@investigate_app.command("tx-trace")
+def investigate_tx_trace(
+    transaction_id: str = typer.Argument(help="Transaction ID to trace."),
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Full forensic trace for a single transaction."""
+    _ensure_init()
+    do_tx_trace(transaction_id, output_json=json_out)
+
+
+@investigate_app.command("events")
+def investigate_events(
+    actor: str = typer.Option(None, "--actor", help="Filter by actor ID."),
+    state: str = typer.Option(None, "--state", help="Filter by transaction state."),
+    to_account: str = typer.Option(None, "--to", help="Filter by destination account."),
+    from_account: str = typer.Option(None, "--from", help="Filter by source account."),
+    since: str = typer.Option(None, "--since", help="Start datetime (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)."),
+    until: str = typer.Option(None, "--until", help="End datetime (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)."),
+    min_amount: float = typer.Option(None, "--min-amount", help="Minimum transaction amount."),
+    max_amount: float = typer.Option(None, "--max-amount", help="Maximum transaction amount."),
+    page: int = typer.Option(1, "--page", help="Page number (1-based)."),
+    page_size: int = typer.Option(20, "--page-size", help="Results per page (max 100)."),
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Paginated, multi-filter security event search."""
+    _ensure_init()
+    do_event_search(
+        actor=actor,
+        state=state,
+        to_account=to_account,
+        from_account=from_account,
+        since=since,
+        until=until,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        page=page,
+        page_size=page_size,
+        output_json=json_out,
+    )
+
+
+@investigate_app.command("actor-profile")
+def investigate_actor_profile(
+    actor_id: str = typer.Argument(help="Actor ID to profile."),
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Security posture: risk contributors, incidents, signals, audit history."""
+    _ensure_init()
+    do_actor_profile(actor_id, output_json=json_out)
+
+
+@investigate_app.command("timeline")
+def investigate_timeline(
+    incident_id: str = typer.Argument(help="Incident ID to build timeline for."),
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Deterministic chronological timeline from real records."""
+    _ensure_init()
+    do_incident_timeline(incident_id, output_json=json_out)
+
+
+@investigate_app.command("transition")
+def investigate_transition(
+    incident_id: str = typer.Argument(help="Incident ID to transition."),
+    new_state: str = typer.Argument(help="Target state (investigating/contained/resolved/closed)."),
+    actor_id: str = typer.Option(..., "--actor", help="Actor performing the transition."),
+    note: str = typer.Option(None, "--note", help="Optional reason for the transition."),
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Advance an incident lifecycle state with audit record."""
+    _ensure_init()
+    do_incident_transition(incident_id, new_state, actor_id, note=note, output_json=json_out)
+
 
 
 @decision_app.command("inspect")

@@ -140,6 +140,15 @@ class IncidentRecord(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
     state = Column(String, nullable=False, default="open")
+    # Lifecycle additions — nullable for backwards compat with existing rows
+    resolved_by = Column(String, nullable=True)   # actor_id who last transitioned
+    state_note = Column(Text, nullable=True)       # free-text reason for last transition
+
+    __table_args__ = (
+        Index("ix_incidents_actor", "actor_id"),
+        Index("ix_incidents_state", "state"),
+        Index("ix_incidents_transaction", "transaction_id"),
+    )
 
 
 class SecuritySignalRecord(Base):
@@ -152,6 +161,10 @@ class SecuritySignalRecord(Base):
     score = Column(Integer, nullable=False, default=0)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_signals_transaction", "transaction_id"),
+    )
 
 
 class DecisionReceiptRecord(Base):
