@@ -2,8 +2,8 @@
 
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.prompt import Prompt
+from rich.table import Table
 
 from finguard.approvals.service import ApprovalService
 from finguard.identity.registry import IdentityRegistry
@@ -73,6 +73,6 @@ def do_approval_approve(transaction_id: str, approver_id: str | None = None, key
         console.print(f"Bound TX Hash:      [dim]{record.transaction_hash}[/dim]")
         console.print(f"Approver Signature: [dim]{record.approver_signature}[/dim]")
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - CLI boundary should present a stable user-facing failure.
         console.print(f"[bold red]Approval Failed:[/bold red] {e}")
         raise typer.Exit(code=1)

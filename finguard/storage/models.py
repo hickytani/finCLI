@@ -8,9 +8,17 @@ exist solely for persistence.
 import datetime
 
 from sqlalchemy import (
-    Column, String, Integer, BigInteger, Float, DateTime, Text, Boolean, ForeignKey, Index
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
 )
-from sqlalchemy.orm import relationship
 
 from finguard.storage.database import Base
 

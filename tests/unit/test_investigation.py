@@ -14,10 +14,10 @@ Covers:
 """
 
 import datetime
-import json
+
 import pytest
 
-from finguard.core.enums import ActorType, Currency, IncidentSeverity
+from finguard.core.enums import Currency, IncidentSeverity
 from finguard.core.errors import SecurityError
 from finguard.core.transaction import Transaction
 from finguard.decision import DecisionEngine
@@ -30,7 +30,6 @@ from finguard.storage.repositories import (
     SignalRepository,
     TransactionRepository,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -295,15 +294,16 @@ class TestEventSearch:
     def test_search_by_date_range(self):
         _run_tx()
         svc = InvestigationService()
-        yesterday = datetime.datetime.utcnow() - datetime.timedelta(days=1)
-        tomorrow = datetime.datetime.utcnow() + datetime.timedelta(days=1)
+        now = datetime.datetime.now(datetime.UTC)
+        yesterday = now - datetime.timedelta(days=1)
+        tomorrow = now + datetime.timedelta(days=1)
         result = svc.search_events(since=yesterday, until=tomorrow)
         assert result.total >= 1
 
     def test_search_future_date_range_returns_empty(self):
         _run_tx()
         svc = InvestigationService()
-        next_year = datetime.datetime.utcnow() + datetime.timedelta(days=365)
+        next_year = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365)
         result = svc.search_events(since=next_year)
         assert result.total == 0
 

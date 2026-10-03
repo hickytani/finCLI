@@ -7,7 +7,7 @@ state table instead of allowing raw string mutation in callers.
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import ClassVar
 
 from finguard.core.enums import TransactionState
 
@@ -19,7 +19,7 @@ class InvalidTransitionError(ValueError):
 class TransactionStateMachine:
     """Deterministic transition rules for a transaction lifecycle."""
 
-    _VALID_TRANSITIONS: dict[TransactionState, set[TransactionState]] = {
+    _VALID_TRANSITIONS: ClassVar[dict[TransactionState, set[TransactionState]]] = {
         TransactionState.CREATED: {
             TransactionState.PENDING_APPROVAL,
             TransactionState.SIGNED,

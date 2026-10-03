@@ -1,15 +1,14 @@
 """CLI commands for identity and authority management."""
 
-import json
 from pathlib import Path
+
 import typer
-from finguard.core.enums import Currency
-from finguard.money import Money
 from rich.console import Console
 from rich.table import Table
 
-from finguard.core.enums import ActorType
-from finguard.identity.registry import IdentityRegistry, ActorConfig
+from finguard.core.enums import ActorType, Currency
+from finguard.identity.registry import ActorConfig, IdentityRegistry
+from finguard.money import Money
 
 console = Console()
 

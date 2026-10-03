@@ -16,7 +16,7 @@ SECURITY PROPERTIES:
 import datetime
 import json
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -38,7 +38,6 @@ from finguard.storage.repositories import (
     TransactionRepository,
 )
 
-
 # ---------------------------------------------------------------------------
 # Result dataclasses — typed containers with no fabricated fields
 # ---------------------------------------------------------------------------
@@ -52,11 +51,11 @@ class TransactionSummary:
     from_account: str
     to_account: str
     amount: str
-    amount_minor: Optional[int]
+    amount_minor: int | None
     currency: str
     state: str
     timestamp: datetime.datetime
-    canonical_hash: Optional[str]
+    canonical_hash: str | None
     nonce: str
 
     @classmethod
@@ -84,7 +83,7 @@ class SignalSummary:
     transaction_id: str
     signal_type: str
     score: int
-    description: Optional[str]
+    description: str | None
     created_at: datetime.datetime
 
     @classmethod
@@ -104,11 +103,11 @@ class AuditSummary:
     """Summary of a single audit ledger entry."""
     entry_id: int
     timestamp: datetime.datetime
-    actor_id: Optional[str]
+    actor_id: str | None
     action: str
-    transaction_id: Optional[str]
-    result: Optional[str]
-    metadata: Optional[dict]
+    transaction_id: str | None
+    result: str | None
+    metadata: dict | None
 
     @classmethod
     def from_record(cls, r: AuditEntryRecord) -> "AuditSummary":
@@ -116,7 +115,7 @@ class AuditSummary:
         if r.metadata_json:
             try:
                 meta = json.loads(r.metadata_json)
-            except Exception:
+            except (TypeError, ValueError):
                 meta = {"raw": r.metadata_json}
         return cls(
             entry_id=r.entry_id,
@@ -135,8 +134,8 @@ class ReceiptSummary:
     receipt_id: str
     transaction_id: str
     decision: str
-    risk_score: Optional[int]
-    risk_level: Optional[str]
+    risk_score: int | None
+    risk_level: str | None
     reasons: list[str]
     timestamp: datetime.datetime
 
@@ -147,7 +146,7 @@ class ReceiptSummary:
             try:
                 raw = json.loads(r.matched_rules)
                 reasons = raw if isinstance(raw, list) else [str(raw)]
-            except Exception:
+            except (TypeError, ValueError):
                 reasons = [r.matched_rules]
         return cls(
             receipt_id=r.receipt_id,
@@ -164,9 +163,9 @@ class ReceiptSummary:
 class IncidentTrace:
     """Full forensic trace for a security incident."""
     incident: IncidentRecord
-    transaction: Optional[TransactionSummary]
+    transaction: TransactionSummary | None
     signals: list[SignalSummary]
-    receipt: Optional[ReceiptSummary]
+    receipt: ReceiptSummary | None
     audit_entries: list[AuditSummary]
 
 
@@ -222,7 +221,7 @@ class InvestigationService:
     opens and closes its own session.
     """
 
-    def __init__(self, session: Optional[Session] = None):
+    def __init__(self, session: Session | None = None):
         self._external_session = session
 
     def _get_session(self) -> tuple[Session, bool]:
@@ -237,7 +236,7 @@ class InvestigationService:
     def get_incident_trace(
         self,
         incident_id: str,
-        owner_actor_id: Optional[str] = None,
+        owner_actor_id: str | None = None,
     ) -> IncidentTrace:
         """Return a full forensic trace for an incident.
 
@@ -274,9 +273,9 @@ class InvestigationService:
                 )
 
             # Related transaction
-            tx_summary: Optional[TransactionSummary] = None
+            tx_summary: TransactionSummary | None = None
             signals: list[SignalSummary] = []
-            receipt: Optional[ReceiptSummary] = None
+            receipt: ReceiptSummary | None = None
             tx_audit: list[AuditSummary] = []
 
             if inc.transaction_id:
@@ -301,11 +300,6 @@ class InvestigationService:
 
             # Also include any INCIDENT_TRANSITION audit entries for this incident
             inc_audit_recs = audit_repo.get_by_action("INCIDENT_TRANSITION", limit=_DEFAULT_AUDIT_LIMIT)
-            inc_audit = [
-                AuditSummary.from_record(a)
-                for a in inc_audit_recs
-                if a.metadata_json and incident_id in (a.metadata_json or "")
-            ]
 
             # Merge and deduplicate audit entries by entry_id
             seen: set[int] = set()
@@ -334,17 +328,17 @@ class InvestigationService:
 
     def search_events(
         self,
-        actor_id: Optional[str] = None,
-        state: Optional[str] = None,
-        to_account: Optional[str] = None,
-        from_account: Optional[str] = None,
-        since: Optional[datetime.datetime] = None,
-        until: Optional[datetime.datetime] = None,
-        min_amount: Optional[float] = None,
-        max_amount: Optional[float] = None,
+        actor_id: str | None = None,
+        state: str | None = None,
+        to_account: str | None = None,
+        from_account: str | None = None,
+        since: datetime.datetime | None = None,
+        until: datetime.datetime | None = None,
+        min_amount: float | None = None,
+        max_amount: float | None = None,
         page: int = 1,
         page_size: int = _DEFAULT_PAGE_SIZE,
-        requesting_actor_id: Optional[str] = None,
+        requesting_actor_id: str | None = None,
     ) -> EventSearchResult:
         """Paginated, filtered event (transaction) search.
 
@@ -393,16 +387,16 @@ class InvestigationService:
         try:
             repo = TransactionRepository(session)
 
-            kwargs: dict[str, Any] = dict(
-                actor_id=effective_actor_id,
-                state=state,
-                to_account=to_account,
-                from_account=from_account,
-                since=since,
-                until=until,
-                min_amount=min_amount,
-                max_amount=max_amount,
-            )
+            kwargs: dict[str, Any] = {
+                "actor_id": effective_actor_id,
+                "state": state,
+                "to_account": to_account,
+                "from_account": from_account,
+                "since": since,
+                "until": until,
+                "min_amount": min_amount,
+                "max_amount": max_amount,
+            }
 
             total = repo.count_search(**kwargs)
             records = repo.search(offset=offset, limit=page_size, **kwargs)
@@ -426,7 +420,7 @@ class InvestigationService:
     def get_actor_profile(
         self,
         actor_id: str,
-        requesting_actor_id: Optional[str] = None,
+        requesting_actor_id: str | None = None,
         tx_limit: int = 20,
         incident_limit: int = 20,
         audit_limit: int = 20,
@@ -505,7 +499,7 @@ class InvestigationService:
     def get_incident_timeline(
         self,
         incident_id: str,
-        owner_actor_id: Optional[str] = None,
+        owner_actor_id: str | None = None,
     ) -> list[TimelineItem]:
         """Build a deterministic chronological timeline for an incident.
 
@@ -606,7 +600,7 @@ class InvestigationService:
     def get_transaction_trace(
         self,
         transaction_id: str,
-        owner_actor_id: Optional[str] = None,
+        owner_actor_id: str | None = None,
     ) -> dict[str, Any]:
         """Full forensic trace for a single transaction.
 

@@ -1,10 +1,11 @@
 """Executable adversarial cases; attacks use the actual SDK and execution path."""
-from dataclasses import dataclass, field
 import os
-from pathlib import Path
 import tempfile
 import threading
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -12,12 +13,12 @@ from finguard.agent_sdk import FinGuardAgentClient
 from finguard.approvals.service import ApprovalService
 from finguard.attacks.scenario_loader import ScenarioLoader
 from finguard.core.enums import ActorType, Currency, DecisionType
-from finguard.core.errors import SecurityError
+from finguard.core.errors import KeystoreError, SecurityError
 from finguard.core.transaction import Transaction
-from finguard.money import Money
 from finguard.crypto.keystore import Keystore
 from finguard.decision import DecisionEngine
 from finguard.identity.registry import IdentityRegistry
+from finguard.money import Money
 from finguard.redteam.coverage import coverage_by_id
 from finguard.signing import SigningGate
 from finguard.simulator import FinancialSimulator, SimulatorError
@@ -144,7 +145,7 @@ class RedTeamRunner:
             else:
                 result.update({"attack_id": attack_id, "attack_family": family})
                 report.results.append(result)
-        except Exception as exc:
+        except (AssertionError, ValueError, TypeError, RuntimeError) as exc:
             report.errors.append({"attack_id": attack_id, "attack_family": family, "error": str(exc)})
 
     @staticmethod
@@ -177,7 +178,7 @@ class RedTeamRunner:
         for key_id in (self.APPROVER_KEY, self.OPERATOR_KEY):
             try:
                 keystore.get_public_key(key_id)
-            except Exception:
+            except KeystoreError:
                 keystore.create_keypair(key_id, self.KEY_PASSWORD)
         registry = IdentityRegistry()
         approver = registry.get_actor("approver-1")

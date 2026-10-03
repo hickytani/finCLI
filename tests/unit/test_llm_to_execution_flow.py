@@ -10,7 +10,6 @@ from finguard.agent import TreasuryAgent
 from finguard.ai.analyzer import LocalAIAnalyzer
 from finguard.approvals.service import ApprovalService
 from finguard.crypto.keystore import Keystore
-from finguard.identity.registry import IdentityRegistry
 from finguard.signing import SigningGate
 from finguard.simulator import FinancialSimulator, SimulatorError
 

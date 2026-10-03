@@ -13,7 +13,7 @@ import math
 import secrets
 import unicodedata
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -44,7 +44,7 @@ class Transaction(BaseModel):
 
     transaction_id: str = Field(default_factory=_generate_tx_id)
     actor_id: str
-    session_id: Optional[str] = None
+    session_id: str | None = None
     from_account: str
     to_account: str
     amount: Money
@@ -52,18 +52,18 @@ class Transaction(BaseModel):
     canonical_version: int = Field(default=2, frozen=True)
     nonce: str = Field(default_factory=_generate_nonce)
     timestamp: datetime.datetime = Field(
-        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
+        default_factory=lambda: datetime.datetime.now(datetime.UTC)
     )
-    metadata: Optional[Dict[str, Any]] = None
-    idempotency_key: Optional[str] = None
-    policy_version: Optional[str] = None
-    initiating_actor_type: Optional[str] = None
+    metadata: dict[str, Any] | None = None
+    idempotency_key: str | None = None
+    policy_version: str | None = None
+    initiating_actor_type: str | None = None
 
     # Non-canonical fields (not included in security hash)
     state: TransactionState = TransactionState.CREATED
     revision: int = Field(default=1, ge=1)
-    signature: Optional[str] = None
-    signing_key_id: Optional[str] = None
+    signature: str | None = None
+    signing_key_id: str | None = None
 
     model_config = ConfigDict(validate_assignment=True)
 
@@ -133,7 +133,7 @@ class Transaction(BaseModel):
         "transaction_id", "actor_id", "session_id", "nonce", "idempotency_key", "policy_version"
     )
     @classmethod
-    def identifiers_must_be_canonical_unicode(cls, value: Optional[str]) -> Optional[str]:
+    def identifiers_must_be_canonical_unicode(cls, value: str | None) -> str | None:
         if value is None:
             return None
         return cls.validate_signed_identifier(value)
@@ -180,7 +180,7 @@ class Transaction(BaseModel):
         meta_json = json.dumps(self.metadata, sort_keys=True, separators=(",", ":"), allow_nan=False)
         return sha256_hash(meta_json.encode("utf-8"))
 
-    def canonical_fields(self, version: Optional[int] = None) -> dict:
+    def canonical_fields(self, version: int | None = None) -> dict:
         """Return the security-sensitive fields in canonical form."""
         ver = 2 if version is None else version
         if ver == 1:
@@ -219,12 +219,12 @@ class Transaction(BaseModel):
         else:
             raise ValidationError(f"Unsupported canonical version: {ver}")
 
-    def canonical_bytes(self, version: Optional[int] = None) -> bytes:
+    def canonical_bytes(self, version: int | None = None) -> bytes:
         """Produce deterministic canonical bytes for this transaction."""
         ver = 2 if version is None else version
         return canonical_serialize(self.canonical_fields(ver), version=ver)
 
-    def transaction_hash(self, version: Optional[int] = None) -> str:
+    def transaction_hash(self, version: int | None = None) -> str:
         """Compute the SHA-256 hash of the canonical transaction bytes."""
         return sha256_hash(self.canonical_bytes(version))
 

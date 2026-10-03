@@ -1,6 +1,7 @@
 """Property-based tests for Money and Canonical v2 using Hypothesis (test_money_properties.py)."""
 
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 
 from finguard.core.enums import Currency
 from finguard.core.transaction import Transaction

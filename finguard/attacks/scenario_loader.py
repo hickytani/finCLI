@@ -7,26 +7,26 @@ approvals, and cryptographic signing, proving adversarially that invalid operati
 are detected, blocked, recorded in tamper-evident audit logs, and trigger incidents.
 """
 
-import yaml
-from pathlib import Path
 from decimal import Decimal
-from typing import Optional, List
+from pathlib import Path
+
+import yaml
 from pydantic import BaseModel, Field
 
+from finguard.approvals.service import ApprovalService
 from finguard.audit.ledger import AuditLedger
 from finguard.audit.nonce_store import NonceStore
-from finguard.approvals.service import ApprovalService
-from finguard.core.enums import Currency, TransactionState, IncidentSeverity, DecisionType
+from finguard.core.enums import Currency, DecisionType, IncidentSeverity, TransactionState
+from finguard.core.errors import KeystoreError
 from finguard.core.transaction import Transaction
 from finguard.crypto.keystore import Keystore
-from finguard.crypto.signing import sign_canonical_bytes
 from finguard.identity.registry import IdentityRegistry
 from finguard.incidents.service import IncidentService
 from finguard.policy.engine import PolicyEngine
 from finguard.risk.engine import RiskEngine
 from finguard.storage.database import get_session
-from finguard.storage.models import TransactionRecord, ActorRecord
-from finguard.storage.repositories import TransactionRepository, ActorRepository
+from finguard.storage.models import ActorRecord, TransactionRecord
+from finguard.storage.repositories import ActorRepository, TransactionRepository
 
 
 class ScenarioStepResult(BaseModel):
@@ -40,24 +40,24 @@ class ScenarioExecutionResult(BaseModel):
     scenario_name: str
     description: str
     passed: bool
-    original_hash: Optional[str] = None
-    modified_hash: Optional[str] = None
-    original_nonce: Optional[str] = None
-    incident_id: Optional[str] = None
-    step_results: List[ScenarioStepResult] = Field(default_factory=list)
-    explanation_trace: List[str] = Field(default_factory=list)
+    original_hash: str | None = None
+    modified_hash: str | None = None
+    original_nonce: str | None = None
+    incident_id: str | None = None
+    step_results: list[ScenarioStepResult] = Field(default_factory=list)
+    explanation_trace: list[str] = Field(default_factory=list)
 
 
 class ScenarioLoader:
     """Loads and executes declarative YAML attack scenarios."""
 
-    def __init__(self, scenarios_dir: Optional[Path] = None):
+    def __init__(self, scenarios_dir: Path | None = None):
         if scenarios_dir:
             self.scenarios_dir = scenarios_dir
         else:
             self.scenarios_dir = Path(__file__).parent / "scenarios"
 
-    def list_scenarios(self) -> List[str]:
+    def list_scenarios(self) -> list[str]:
         """List available scenario file names (without .yaml)."""
         if not self.scenarios_dir.exists():
             return []
@@ -86,14 +86,14 @@ class ScenarioLoader:
         audit_ledger = AuditLedger()
         incident_service = IncidentService()
 
-        tx_obj: Optional[Transaction] = None
-        saved_nonce: Optional[str] = None
-        original_hash: Optional[str] = None
-        modified_hash: Optional[str] = None
-        incident_id: Optional[str] = None
+        tx_obj: Transaction | None = None
+        saved_nonce: str | None = None
+        original_hash: str | None = None
+        modified_hash: str | None = None
+        incident_id: str | None = None
 
-        trace: List[str] = []
-        step_results: List[ScenarioStepResult] = []
+        trace: list[str] = []
+        step_results: list[ScenarioStepResult] = []
         overall_passed = True
 
         session = get_session()
@@ -241,7 +241,7 @@ class ScenarioLoader:
 
                 elif action == "approve_transaction":
                     if tx_obj:
-                        appr_rec = approval_service.create_approval_request(
+                        approval_service.create_approval_request(
                             transaction=tx_obj,
                             required_approvals=1,
                             requester_id=tx_obj.actor_id
@@ -253,7 +253,7 @@ class ScenarioLoader:
                         passw = "scenario-password"
                         try:
                             keystore.get_public_key(key_id)
-                        except Exception:
+                        except (FileNotFoundError, KeystoreError):
                             keystore.create_keypair(key_id, passw)
                         if approver_actor.public_key != keystore.get_public_key(key_id):
                             approver_actor.public_key = keystore.get_public_key(key_id)

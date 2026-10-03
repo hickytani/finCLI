@@ -9,6 +9,7 @@ These tests prove that defects FG-201 through FG-206 are permanently fixed:
 """
 
 import datetime
+
 import pytest
 
 from finguard.core.authority import evaluate_authority
@@ -125,8 +126,9 @@ def test_operator_wildcard_authority_is_allowed_and_emits_signal():
 
 
 def test_simulator_balances_must_not_use_float_arithmetic():
-    from finguard.storage.models import SimulatorAccountRecord
     from sqlalchemy import BigInteger
+
+    from finguard.storage.models import SimulatorAccountRecord
     assert isinstance(SimulatorAccountRecord.balance_minor.type, BigInteger)
 
 

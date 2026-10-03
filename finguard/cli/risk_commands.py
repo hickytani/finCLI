@@ -1,13 +1,14 @@
 """CLI commands for risk analysis."""
 
 import json
+
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from finguard.core.transaction import Transaction
-from finguard.money import Money
 from finguard.identity.registry import IdentityRegistry
+from finguard.money import Money
 from finguard.risk.engine import RiskEngine
 from finguard.storage.database import get_session
 from finguard.storage.repositories import TransactionRepository

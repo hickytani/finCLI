@@ -1,11 +1,12 @@
 """Individual policy rule implementations using exact minor units comparisons."""
 
 from typing import NamedTuple
+
+from finguard.core.enums import ActorType, DecisionType
 from finguard.core.transaction import Transaction
 from finguard.identity.registry import ActorConfig as Actor
-from finguard.core.enums import ActorType, DecisionType
-from finguard.policy.schema import PolicyConfig
 from finguard.money import Money
+from finguard.policy.schema import PolicyConfig
 
 
 class RuleResult(NamedTuple):
@@ -67,24 +68,32 @@ def evaluate_destination_rule(tx: Transaction, actor: Actor, policy: PolicyConfi
     rule_name = "DestinationAllowlistRule"
 
     # Agent specific allowlist
-    if actor.actor_type == ActorType.AGENT and policy.agent and policy.agent.allowed_destinations:
-        if tx.to_account not in policy.agent.allowed_destinations and "*" not in policy.agent.allowed_destinations:
-            return RuleResult(
-                matched=True,
-                decision=DecisionType.BLOCK,
-                reason=f"Destination '{tx.to_account}' is not in agent policy allowlist ({', '.join(policy.agent.allowed_destinations)})",
-                rule_name=rule_name
-            )
+    if (
+        actor.actor_type == ActorType.AGENT
+        and policy.agent
+        and policy.agent.allowed_destinations
+        and tx.to_account not in policy.agent.allowed_destinations
+        and "*" not in policy.agent.allowed_destinations
+    ):
+        return RuleResult(
+            matched=True,
+            decision=DecisionType.BLOCK,
+            reason=f"Destination '{tx.to_account}' is not in agent policy allowlist ({', '.join(policy.agent.allowed_destinations)})",
+            rule_name=rule_name,
+        )
 
     # Global policy allowlist
-    if policy.allowed_destinations:
-        if tx.to_account not in policy.allowed_destinations and "*" not in policy.allowed_destinations:
-            return RuleResult(
-                matched=True,
-                decision=DecisionType.BLOCK,
-                reason=f"Destination '{tx.to_account}' is not in policy allowlist ({', '.join(policy.allowed_destinations)})",
-                rule_name=rule_name
-            )
+    if (
+        policy.allowed_destinations
+        and tx.to_account not in policy.allowed_destinations
+        and "*" not in policy.allowed_destinations
+    ):
+        return RuleResult(
+            matched=True,
+            decision=DecisionType.BLOCK,
+            reason=f"Destination '{tx.to_account}' is not in policy allowlist ({', '.join(policy.allowed_destinations)})",
+            rule_name=rule_name,
+        )
 
     return RuleResult(matched=False, decision=DecisionType.ALLOW, reason="", rule_name=rule_name)
 

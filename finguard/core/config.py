@@ -8,8 +8,8 @@ without external infrastructure.
 import os
 from pathlib import Path
 
-from pydantic_settings import BaseSettings
 from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
 def _default_data_dir() -> Path:

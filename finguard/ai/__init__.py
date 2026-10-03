@@ -2,4 +2,4 @@
 from .analyzer import LocalAIAnalyzer
 from .schemas import AIAnalysis, TransactionExtraction
 
-__all__ = ["LocalAIAnalyzer", "AIAnalysis", "TransactionExtraction"]
+__all__ = ["AIAnalysis", "LocalAIAnalyzer", "TransactionExtraction"]

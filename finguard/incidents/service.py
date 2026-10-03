@@ -24,10 +24,10 @@ Valid transitions:
 Terminal states: resolved, closed  (no further transitions allowed)
 """
 
-import uuid
-import json
 import datetime
-from typing import Optional, List
+import json
+import uuid
+
 from sqlalchemy.orm import Session
 
 from finguard.audit.ledger import AuditLedger
@@ -36,7 +36,6 @@ from finguard.core.errors import SecurityError
 from finguard.storage.database import get_session
 from finguard.storage.models import IncidentRecord
 from finguard.storage.repositories import IncidentRepository
-
 
 # ---------------------------------------------------------------------------
 # State machine
@@ -64,7 +63,7 @@ class InvalidTransitionError(ValueError):
 class IncidentService:
     """Creates and manages security incidents."""
 
-    def __init__(self, session: Optional[Session] = None):
+    def __init__(self, session: Session | None = None):
         self._external_session = session
 
     def _get_session(self) -> tuple[Session, bool]:
@@ -80,9 +79,9 @@ class IncidentService:
         self,
         severity: IncidentSeverity,
         description: str,
-        transaction_id: Optional[str] = None,
-        actor_id: Optional[str] = None,
-        signals: Optional[List[str]] = None,
+        transaction_id: str | None = None,
+        actor_id: str | None = None,
+        signals: list[str] | None = None,
         decision: str = "BLOCK"
     ) -> IncidentRecord:
         """Create a new security incident record."""
@@ -99,7 +98,7 @@ class IncidentService:
                 signals=json.dumps(signals) if signals else json.dumps([]),
                 decision=decision,
                 description=description,
-                created_at=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None),
+                created_at=datetime.datetime.now(datetime.UTC).replace(tzinfo=None),
                 state="open"
             )
             repo.save(record)
@@ -112,7 +111,7 @@ class IncidentService:
     # Listing / retrieval
     # ------------------------------------------------------------------
 
-    def list_incidents(self, limit: int = 50) -> List[IncidentRecord]:
+    def list_incidents(self, limit: int = 50) -> list[IncidentRecord]:
         """List security incidents."""
         session, is_local = self._get_session()
         try:
@@ -122,7 +121,7 @@ class IncidentService:
             if is_local:
                 session.close()
 
-    def list_open_incidents(self, limit: int = 50) -> List[IncidentRecord]:
+    def list_open_incidents(self, limit: int = 50) -> list[IncidentRecord]:
         """List non-terminal security incidents."""
         session, is_local = self._get_session()
         try:
@@ -131,7 +130,7 @@ class IncidentService:
             if is_local:
                 session.close()
 
-    def get_incident(self, incident_id: str) -> Optional[IncidentRecord]:
+    def get_incident(self, incident_id: str) -> IncidentRecord | None:
         """Retrieve a specific incident by ID."""
         session, is_local = self._get_session()
         try:
@@ -150,7 +149,7 @@ class IncidentService:
         incident_id: str,
         new_state: str,
         requesting_actor_id: str,
-        note: Optional[str] = None,
+        note: str | None = None,
     ) -> IncidentRecord:
         """Transition an incident to a new lifecycle state.
 
@@ -200,7 +199,7 @@ class IncidentService:
                     f"Allowed: {sorted(allowed_next) or 'none (terminal state)'}."
                 )
 
-            now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
             resolved_at = now if new_state in _RESOLUTION_STATES else None
 
             updated = repo.update_state(
@@ -224,8 +223,9 @@ class IncidentService:
                         "note": note or "",
                     },
                 )
-            except Exception:
-                # Audit failure must not undo the transition (security integrity)
+            except (OSError, RuntimeError, ValueError):
+                # Audit failure must not undo the transition (security integrity).
+                # This is a best-effort witness path and is intentionally non-fatal.
                 pass
 
             return updated

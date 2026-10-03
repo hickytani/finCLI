@@ -8,7 +8,7 @@ Supports declarative policy-as-code:
 - Actor / Agent-specific constraints
 """
 
-from typing import Optional
+
 from pydantic import BaseModel, Field, field_validator
 
 from finguard.core.enums import Currency
@@ -45,7 +45,7 @@ class VelocityPolicy(BaseModel):
     """Velocity limit rule config."""
     count: int = Field(default=5)
     window_seconds: int = Field(default=600)
-    max_cumulative_amount: Optional[str | int] = None
+    max_cumulative_amount: str | int | None = None
 
 
 class ApprovalPolicy(BaseModel):
@@ -87,9 +87,9 @@ class PolicyConfig(BaseModel):
 
     policy_id: str
     version: int = 1
-    description: Optional[str] = None
-    max_amount: Optional[MaxAmountPolicy] = None
+    description: str | None = None
+    max_amount: MaxAmountPolicy | None = None
     allowed_destinations: list[str] = Field(default_factory=list)
-    velocity: Optional[VelocityPolicy] = None
-    approval: Optional[ApprovalPolicy] = None
-    agent: Optional[AgentPolicyConfig] = None
+    velocity: VelocityPolicy | None = None
+    approval: ApprovalPolicy | None = None
+    agent: AgentPolicyConfig | None = None

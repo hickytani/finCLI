@@ -20,12 +20,12 @@ class OllamaModel:
                 body = json.loads(response.read().decode())
             content = body["message"]["content"]
             if not isinstance(content, str):
-                raise ValueError("Ollama response content was not text")
+                raise TypeError("Ollama response content was not text")
             parsed = json.loads(content)
             if not isinstance(parsed, dict):
-                raise ValueError("Ollama response was not a JSON object")
+                raise TypeError("Ollama response was not a JSON object")
             return parsed
-        except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as exc:
+        except (urllib.error.URLError, TimeoutError, KeyError, TypeError, ValueError) as exc:
             raise LocalModelError(f"Local model unavailable or returned invalid JSON: {exc}") from exc
 
     def status(self) -> dict:

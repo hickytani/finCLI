@@ -8,11 +8,10 @@ Provides typed MCP tool interfaces for orchestrators, builders, and attackers:
 - list_open_tickets(): view active/pending tickets in .agent/TASKS.md
 """
 
-import json
-import os
 import subprocess
 import sys
 from pathlib import Path
+
 from mcp.server.fastmcp import FastMCP
 
 # Initialize FastMCP server
@@ -47,7 +46,7 @@ def run_tests(tier: str = "T1") -> str:
     else:
         return f"Unknown tier '{tier}'. Supported tiers: T0, T1, T2, T3."
 
-    res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
+    res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=False)
     return f"Exit Code: {res.returncode}\n\nSTDOUT:\n{res.stdout[:4000]}\n\nSTDERR:\n{res.stderr[:2000]}"
 
 
@@ -58,7 +57,7 @@ def run_attacks(category: str = "all") -> str:
     python_cmd = str(venv_python) if venv_python.exists() else sys.executable
 
     cmd = [python_cmd, "-m", "pytest", "-v", "tests/unit/test_product_redteam.py", "tests/regression/"]
-    res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
+    res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=False)
     return f"Exit Code: {res.returncode}\n\nOutput:\n{res.stdout[:4000]}"
 
 
@@ -69,7 +68,7 @@ def run_bench() -> str:
     python_cmd = str(venv_python) if venv_python.exists() else sys.executable
 
     cmd = [python_cmd, "scripts/bench.py"]
-    res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
+    res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=False)
     return res.stdout if res.returncode == 0 else f"Benchmark failed:\n{res.stderr}"
 
 

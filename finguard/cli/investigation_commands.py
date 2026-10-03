@@ -9,18 +9,17 @@ Provides the `finguard investigate` subcommand group with:
     transition       — advance an incident through its lifecycle
 """
 
-import json
 import datetime
-from typing import Optional
+import json
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 
+from finguard.core.errors import SecurityError
 from finguard.incidents.service import IncidentService, InvalidTransitionError
 from finguard.investigation.service import InvestigationService
-from finguard.core.errors import SecurityError
 
 console = Console()
 
@@ -223,14 +222,14 @@ def do_tx_trace(transaction_id: str, output_json: bool = False) -> None:
 # ---------------------------------------------------------------------------
 
 def do_event_search(
-    actor: Optional[str] = None,
-    state: Optional[str] = None,
-    to_account: Optional[str] = None,
-    from_account: Optional[str] = None,
-    since: Optional[str] = None,
-    until: Optional[str] = None,
-    min_amount: Optional[float] = None,
-    max_amount: Optional[float] = None,
+    actor: str | None = None,
+    state: str | None = None,
+    to_account: str | None = None,
+    from_account: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    min_amount: float | None = None,
+    max_amount: float | None = None,
     page: int = 1,
     page_size: int = 20,
     output_json: bool = False,
@@ -413,7 +412,7 @@ def do_incident_transition(
     incident_id: str,
     new_state: str,
     actor_id: str,
-    note: Optional[str] = None,
+    note: str | None = None,
     output_json: bool = False,
 ) -> None:
     """Advance an incident to a new lifecycle state."""
@@ -457,7 +456,7 @@ def _parse_dt(value: str, label: str) -> datetime.datetime:
     """Parse an ISO-8601 datetime string, exiting on failure."""
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
         try:
-            return datetime.datetime.strptime(value, fmt)
+            return datetime.datetime.strptime(value, fmt).replace(tzinfo=datetime.UTC)
         except ValueError:
             continue
     console.print(f"[bold red]Error:[/bold red] Cannot parse {label}='{value}'. Use YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS.")

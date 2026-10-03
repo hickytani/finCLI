@@ -13,22 +13,21 @@ Tests the 10 target attack classes specified in the red-team hardening brief:
 10. Concurrent Race / State Consistency (Idempotent nonces)
 """
 
-import pytest
-import datetime
 
-from finguard.core.transaction import Transaction
-from finguard.core.enums import Currency, TransactionState, ActorType, DecisionType
-from finguard.core.errors import SecurityError, IntegrityError
-from finguard.decision.engine import DecisionEngine
+import pytest
+
 from finguard.approvals.service import ApprovalService
-from finguard.identity.registry import IdentityRegistry, ActorConfig
+from finguard.audit.ledger import AuditLedger
+from finguard.core.enums import ActorType, Currency, DecisionType
+from finguard.core.errors import IntegrityError, SecurityError
+from finguard.core.transaction import Transaction
+from finguard.crypto.keystore import Keystore
+from finguard.crypto.signing import sign_canonical_bytes, verify_signature
+from finguard.decision.engine import DecisionEngine
+from finguard.identity.registry import ActorConfig
 from finguard.incidents.service import IncidentService, InvalidTransitionError
 from finguard.investigation.service import InvestigationService
-from finguard.audit.ledger import AuditLedger
-from finguard.crypto.signing import verify_signature, sign_canonical_bytes
-from finguard.crypto.keystore import Keystore
 from finguard.storage.database import get_session
-from finguard.storage.repositories import TransactionRepository, IncidentRepository
 
 
 @pytest.fixture
@@ -101,7 +100,7 @@ def test_maker_checker_duplicate_approval_by_same_approver_rejected(clean_db, bi
     ks = Keystore()
     try:
         ks.create_keypair("appr-key", "pass123")
-    except Exception:
+    except SecurityError:
         pass
     approver = bind_actor_key("approver-1", "appr-key")
 
@@ -253,7 +252,7 @@ def test_audit_ledger_hash_chain_tamper_detection(clean_db):
     finally:
         session.close()
 
-    is_valid, broken_id, reason = ledger.verify_integrity()
+    is_valid, broken_id, _reason = ledger.verify_integrity()
     assert is_valid is False
     assert broken_id == e2_id
 
@@ -278,7 +277,7 @@ def test_cryptographic_signature_verification_fails_on_tampered_payload():
     ks = Keystore()
     try:
         pub_hex = ks.create_keypair("crypto-test-key", "secret123")
-    except Exception:
+    except SecurityError:
         pub_hex = ks.get_public_key("crypto-test-key")
 
     priv_key = ks.load_private_key("crypto-test-key", "secret123")

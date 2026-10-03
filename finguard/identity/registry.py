@@ -8,23 +8,21 @@ or escalate privileges will cause signature verification to fail and the registr
 will fail to load (failing closed).
 """
 
-import os
-import yaml
 from pathlib import Path
-from typing import Optional, Dict, Any
+
+import yaml
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from finguard.core.config import get_config
-from finguard.core.enums import ActorType, Currency
-from finguard.core.errors import SecurityError, IntegrityError, KeystoreError
+from finguard.core.enums import ActorType, AgentCapability, Currency
+from finguard.core.errors import IntegrityError, SecurityError
 from finguard.crypto.signing import (
     generate_keypair,
+    public_key_to_hex,
     sign_canonical_bytes,
     verify_signature,
-    public_key_to_hex,
-    public_key_from_hex,
 )
-from cryptography.hazmat.primitives.asymmetric import ed25519
 
 
 class ActorConfig(BaseModel):
@@ -36,9 +34,10 @@ class ActorConfig(BaseModel):
     authority_limit: str = "10000.00"
     allowed_destinations: list[str] = Field(default_factory=list)
     allowed_source_accounts: list[str] = Field(default_factory=list)
+    agent_capabilities: list[AgentCapability] = Field(default_factory=list)
     active: bool = True
     session_binding_required: bool = False
-    public_key: Optional[str] = None
+    public_key: str | None = None
 
     @field_validator("authority_limit", mode="before")
     @classmethod
@@ -52,14 +51,14 @@ class ActorConfig(BaseModel):
 class IdentityRegistry:
     """Registry managing identity definitions and cryptographic authority limits."""
 
-    def __init__(self, data_dir: Optional[Path] = None):
+    def __init__(self, data_dir: Path | None = None):
         config = get_config()
         self.data_dir = data_dir or config.data_dir
         self.registry_path = self.data_dir / "identities.yaml"
         self.sig_path = self.data_dir / "identities.yaml.sig"
         self.root_pub_path = self.data_dir / "root_operator.pub"
         self.root_priv_path = self.data_dir / "root_operator.key"
-        self._actors: Dict[str, ActorConfig] = {}
+        self._actors: dict[str, ActorConfig] = {}
         self._init_or_load()
 
     def _init_or_load(self) -> None:
@@ -105,6 +104,7 @@ class IdentityRegistry:
                     "authority_limit": "10000.00",
                     "allowed_destinations": ["vendor-a", "vendor-b"],
                     "allowed_source_accounts": ["treasury", "acct_treasury"],
+                    "agent_capabilities": [AgentCapability.TRANSACTION_PROPOSE.value],
                     "active": True,
                     "session_binding_required": True
                 },
@@ -178,20 +178,21 @@ class IdentityRegistry:
                 authority_limit=str(item.get("authority_limit", "10000.00")),
                 allowed_destinations=item.get("allowed_destinations", []),
                 allowed_source_accounts=legacy_source_accounts,
+                agent_capabilities=item.get("agent_capabilities", []),
                 active=item.get("active", True),
                 session_binding_required=item.get("session_binding_required", False),
                 public_key=item.get("public_key")
             )
             self._actors[actor.actor_id] = actor
 
-    def get_actor(self, actor_id: str) -> Optional[ActorConfig]:
+    def get_actor(self, actor_id: str) -> ActorConfig | None:
         """Return actor config if present and active."""
         actor = self._actors.get(actor_id)
         if actor and actor.active:
             return actor
         return None
 
-    def validate_actor(self, actor_id: str, session_token: Optional[str] = None) -> ActorConfig:
+    def validate_actor(self, actor_id: str, session_token: str | None = None) -> ActorConfig:
         """Validate actor existence, active status, and session binding if required."""
         actor = self.get_actor(actor_id)
         if not actor:
@@ -226,6 +227,9 @@ class IdentityRegistry:
         new_entry = actor_config.model_dump()
         new_entry["actor_type"] = actor_config.actor_type.value
         new_entry["authority_currency"] = actor_config.authority_currency.value
+        new_entry["agent_capabilities"] = [
+            capability.value for capability in actor_config.agent_capabilities
+        ]
 
         for i, item in enumerate(identities):
             if item["actor_id"] == actor_config.actor_id:

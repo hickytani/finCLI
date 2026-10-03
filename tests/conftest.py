@@ -1,10 +1,11 @@
 """Pytest configuration and shared fixtures for FIN//GUARD."""
 
 import pytest
-from finguard.core.config import get_config, reset_config
-from finguard.storage.database import init_db, reset_db, get_engine
+
+from finguard.core.config import reset_config
 from finguard.crypto.keystore import Keystore
 from finguard.identity.registry import IdentityRegistry
+from finguard.storage.database import init_db, reset_db
 
 
 @pytest.fixture(autouse=True)

@@ -70,10 +70,10 @@ def test_offset_aware_timestamps_canonicalize_to_the_same_utc_instant():
     offset = datetime.datetime(
         2026, 1, 1, 17, tzinfo=datetime.timezone(datetime.timedelta(hours=5))
     )
-    base = dict(
-        transaction_id="tx_utc", actor_id="actor", from_account="src", to_account="dst",
-        amount="1.00", currency=Currency.USD, nonce="nonce",
-    )
+    base = {
+      "transaction_id": "tx_utc", "actor_id": "actor", "from_account": "src", "to_account": "dst",
+      "amount": "1.00", "currency": Currency.USD, "nonce": "nonce",
+    }
     assert Transaction(**base, timestamp=utc).canonical_bytes() == Transaction(
         **base, timestamp=offset
     ).canonical_bytes()

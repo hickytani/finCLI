@@ -1,8 +1,14 @@
 """Unit tests for Ed25519 signing and verification."""
 
 import pytest
-from finguard.crypto.signing import generate_keypair, sign_canonical_bytes, verify_signature, public_key_to_hex
+
 from finguard.core.errors import IntegrityError
+from finguard.crypto.signing import (
+    generate_keypair,
+    public_key_to_hex,
+    sign_canonical_bytes,
+    verify_signature,
+)
 
 
 def test_signing_and_verifying_valid():
@@ -26,8 +32,8 @@ def test_signature_fails_if_data_modified():
 
 
 def test_signature_fails_if_wrong_public_key():
-    priv1, pub1 = generate_keypair()
-    priv2, pub2 = generate_keypair()
+    priv1, _pub1 = generate_keypair()
+    _priv2, pub2 = generate_keypair()
     pub2_bytes = bytes.fromhex(public_key_to_hex(pub2))
     data = b"original-bytes"
 

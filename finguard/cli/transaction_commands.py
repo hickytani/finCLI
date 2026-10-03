@@ -1,30 +1,31 @@
 """CLI commands for transaction creation, inspection, signing, and verification."""
 
 import json
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.prompt import Prompt
+from rich.table import Table
 
 from finguard.approvals.service import ApprovalService
 from finguard.audit.ledger import AuditLedger
 from finguard.audit.nonce_store import NonceStore
-from finguard.core.enums import Currency, TransactionState, DecisionType, IncidentSeverity
-from finguard.core.errors import SecurityError
 from finguard.core.canonical import canonical_amount, canonical_serialize
+from finguard.core.enums import Currency, DecisionType, IncidentSeverity, TransactionState
+from finguard.core.errors import SecurityError
 from finguard.core.transaction import Transaction
 from finguard.crypto.hashing import sha256_hash
 from finguard.crypto.keystore import Keystore
 from finguard.crypto.signing import sign_canonical_bytes, verify_signature
 from finguard.identity.registry import IdentityRegistry
 from finguard.incidents.service import IncidentService
+from finguard.money import Money
 from finguard.policy.engine import PolicyEngine
 from finguard.risk.engine import RiskEngine
 from finguard.storage.database import get_session
-from finguard.storage.models import TransactionRecord, ActorRecord
-from finguard.storage.repositories import TransactionRepository, ActorRepository
-from finguard.money import Money
+from finguard.storage.models import ActorRecord, TransactionRecord
+from finguard.storage.repositories import ActorRepository, TransactionRepository
 
 console = Console()
 
@@ -261,9 +262,9 @@ def do_tx_sign(transaction_id: str, key_id: str | None = None):
         console.print(f"[bold green]✓ Transaction '{transaction_id}' successfully signed by the final signing gate.[/bold green]")
         console.print(f"Signature: [dim]{signature}[/dim]")
         return signature
-    except Exception as e:
-        console.print(f"[bold red]SIGNING BLOCKED:[/bold red] {e}")
-        raise typer.Exit(code=1)
+    except (RuntimeError, ValueError, TypeError) as exc:
+        console.print(f"[bold red]SIGNING BLOCKED:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
 
     session = get_session()
     try:
@@ -350,9 +351,9 @@ def do_tx_sign(transaction_id: str, key_id: str | None = None):
             console.print(f"Signing Key ID: [cyan]{key_id}[/cyan]")
             console.print(f"Signature:      [dim]{signature}[/dim]")
 
-        except Exception as e:
-            console.print(f"[bold red]Signing Error:[/bold red] {e}")
-            raise typer.Exit(code=1)
+        except (RuntimeError, ValueError, TypeError) as exc:
+            console.print(f"[bold red]Signing Error:[/bold red] {exc}")
+            raise typer.Exit(code=1) from exc
 
     finally:
         session.close()
@@ -424,14 +425,14 @@ def do_tx_verify(transaction_id: str):
             pub_bytes = bytes.fromhex(pub_hex)
             verify_signature(tx.canonical_bytes(), rec.signature, pub_bytes)
 
-            console.print(f"[bold green]✓ SIGNATURE VALID[/bold green]")
+            console.print("[bold green]✓ SIGNATURE VALID[/bold green]")
+
             console.print(f"Transaction ID: [cyan]{transaction_id}[/cyan]")
             console.print(f"Signing Key:    [cyan]{rec.signing_key_id}[/cyan]")
             console.print(f"Canonical Hash: [dim]{tx.transaction_hash()}[/dim]")
-        except Exception as e:
-            console.print(f"[bold red]✗ SIGNATURE INVALID / INTEGRITY FAILURE:[/bold red] {e}")
-            raise typer.Exit(code=1)
-
+        except (RuntimeError, ValueError, TypeError) as exc:
+            console.print(f"[bold red]✗ SIGNATURE INVALID / INTEGRITY FAILURE:[/bold red] {exc}")
+            raise typer.Exit(code=1) from exc
     finally:
         session.close()
 

@@ -29,6 +29,42 @@ class Currency(str, Enum):
 
 
 @unique
+class AgentCapability(str, Enum):
+    """Capabilities that may be explicitly granted to an agent identity."""
+
+    TRANSACTION_PROPOSE = "transaction.propose"
+
+
+@unique
+class AgentAction(str, Enum):
+    """Typed action claims evaluated by the deterministic agent boundary."""
+
+    TRANSACTION_PROPOSE = "propose_transaction"
+    TRANSACTION_READ = "read_transaction"
+    TRANSACTION_APPROVE = "approve_transaction"
+    TRANSACTION_SIGN = "sign_transaction"
+    TRANSACTION_EXECUTE = "execute_transaction"
+
+
+@unique
+class AgentResource(str, Enum):
+    """Resource classes understood by the current bounded SDK."""
+
+    TRANSACTION = "transaction"
+    ACCOUNT = "account"
+    APPROVAL = "approval"
+    SIGNING_KEY = "signing_key"
+
+
+class AgentRequestOutcome(str, Enum):
+    """Visible outcome of preflight plus the existing deterministic core."""
+
+    ALLOW = "allow"
+    DENY = "deny"
+    APPROVAL_REQUIRED = "approval_required"
+
+
+@unique
 class TransactionState(str, Enum):
     """Lifecycle state of a transaction."""
     CREATED = "created"

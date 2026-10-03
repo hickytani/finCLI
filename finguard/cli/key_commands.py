@@ -2,11 +2,11 @@
 
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.prompt import Prompt
+from rich.table import Table
 
-from finguard.crypto.keystore import Keystore
 from finguard.core.errors import KeystoreError
+from finguard.crypto.keystore import Keystore
 from finguard.identity.registry import IdentityRegistry
 
 console = Console()
@@ -69,7 +69,7 @@ def do_key_generate(
             actor.public_key = pub_hex
             registry.register_actor(actor, registry.root_priv_path)
         console.print(f"[bold green]✓ Keypair '{key_id}' successfully created and encrypted![/bold green]")
-        console.print(f"Algorithm:   [cyan]Ed25519[/cyan]")
+        console.print("Algorithm:   [cyan]Ed25519[/cyan]")
         console.print(f"Public Key:  [dim]{pub_hex}[/dim]")
         console.print(f"Fingerprint: [magenta]{pub_hex[:16]}[/magenta]")
         if actor:
@@ -85,7 +85,7 @@ def do_key_inspect(key_id: str):
     try:
         pub_hex = keystore.get_public_key(key_id)
         console.print(f"[bold cyan]Key Details for '{key_id}':[/bold cyan]")
-        console.print(f"Algorithm:   [cyan]Ed25519[/cyan]")
+        console.print("Algorithm:   [cyan]Ed25519[/cyan]")
         console.print(f"Public Key:  [white]{pub_hex}[/white]")
         console.print(f"Fingerprint: [magenta]{pub_hex[:16]}[/magenta]")
     except KeystoreError as e:

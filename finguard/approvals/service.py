@@ -10,7 +10,6 @@ SECURITY PROPERTY:
 import datetime
 import json
 import uuid
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -42,7 +41,7 @@ from finguard.storage.repositories import (
 class ApprovalService:
     """Manages transaction approval workflows and cryptographic signature binding."""
 
-    def __init__(self, session: Optional[Session] = None):
+    def __init__(self, session: Session | None = None):
         self._external_session = session
 
     def _get_session(self) -> tuple[Session, bool]:
@@ -77,7 +76,7 @@ class ApprovalService:
                 requester_id=requester_id,
                 policy_version=str(policy.version),
                 policy_hash=policy_hash,
-                created_at=datetime.datetime.now(datetime.timezone.utc)
+                created_at=datetime.datetime.now(datetime.UTC)
             )
             session.add(req)
 
@@ -167,7 +166,7 @@ class ApprovalService:
             if any(a.approver_id == approver.actor_id for a in existing_approvals):
                 raise SecurityError(f"Approver '{approver.actor_id}' has already approved transaction '{transaction_id}'. Duplicate approvals are rejected.")
 
-            now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
             expires_at = now + datetime.timedelta(minutes=30)
             payload = {
                 "transaction_hash": tx_rec.canonical_hash, "request_id": req.request_id,
@@ -276,7 +275,7 @@ class ApprovalService:
             }
 
             valid = 0
-            now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
             for appr in approvals:
                 if (appr.transaction_hash != transaction.transaction_hash() or appr.request_id != req.request_id
                         or appr.transaction_version != transaction.revision
@@ -318,7 +317,7 @@ class ApprovalService:
                 try:
                     pub = Keystore().get_public_key(appr.signing_key_id)
                     verify_signature(canonical_serialize(payload), appr.approver_signature, bytes.fromhex(pub))
-                except Exception:
+                except (TypeError, ValueError):
                     return False
                 valid += 1
             return valid >= req.required_approvals

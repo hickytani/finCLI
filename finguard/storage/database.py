@@ -8,15 +8,15 @@ The database is NOT encrypted at rest in the MVP. Production deployments
 should use encrypted storage or full-disk encryption.
 """
 
+import sqlalchemy
 from sqlalchemy import create_engine, event, inspect, text
-from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from finguard.core.config import get_config
 
 
 class Base(DeclarativeBase):
     """SQLAlchemy declarative base for all ORM models."""
-    pass
 
 
 _engine = None
@@ -102,6 +102,11 @@ def init_db() -> None:
         "audit_entries": {
             "seq": "INTEGER",
         },
+        "simulator_accounts": {
+            "balance_minor": "BIGINT NOT NULL DEFAULT 0",
+            "active": "BOOLEAN NOT NULL DEFAULT 1",
+            "created_at": "DATETIME",
+        },
         # Incident lifecycle additions
         "incidents": {
             "resolved_by": "VARCHAR",
@@ -119,20 +124,23 @@ def init_db() -> None:
 
     inspector = inspect(engine)
     with engine.begin() as connection:
+        existing_tables = set(inspect(connection).get_table_names())
         for table, columns in column_migrations.items():
             # Table may not exist yet on a brand-new db (create_all handles it)
-            try:
-                existing = {col["name"] for col in inspector.get_columns(table)}
-            except Exception:
+            if table not in existing_tables:
                 continue
+            existing = {col["name"] for col in inspector.get_columns(table)}
             for name, ddl_type in columns.items():
                 if name not in existing:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
 
         for stmt in index_migrations:
+            table_name = stmt.split()[4].split("(")[0] if "ON" in stmt else None
+            if table_name and table_name not in existing_tables:
+                continue
             try:
                 connection.execute(text(stmt))
-            except Exception:
+            except (RuntimeError, ValueError, sqlalchemy.exc.OperationalError):
                 pass  # Index may already exist under a different name — not fatal
 
         audit_tables = set(inspect(connection).get_table_names())

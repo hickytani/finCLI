@@ -3,7 +3,7 @@ import datetime
 import pytest
 
 from finguard.core.enums import TransactionState
-from finguard.core.state_machine import InvalidTransitionError, TransactionStateMachine
+from finguard.core.state_machine import InvalidTransitionError
 from finguard.core.transaction import Transaction
 from finguard.money import Money
 from finguard.storage.database import get_session
@@ -55,7 +55,7 @@ def test_transaction_repository_compare_and_swap_state_is_atomic() -> None:
             amount_minor=5000,
             currency="INR",
             nonce="nonce-cas-1",
-            timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             state=TransactionState.CREATED.value,
             version=1,
         )
@@ -88,7 +88,7 @@ def test_transaction_repository_rejects_reused_idempotency_key_with_different_bo
             currency="INR",
             nonce="nonce-idem-1",
             idempotency_key="invoice-2026-42",
-            timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             state=TransactionState.CREATED.value,
             version=1,
         )

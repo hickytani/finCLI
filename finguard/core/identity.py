@@ -5,7 +5,6 @@ SECURITY PRINCIPLE:
 - Actors have explicit roles, permissions, transaction limits, and destination allowlists.
 """
 
-from typing import Optional, Any
 from pydantic import BaseModel, Field
 
 from finguard.core.enums import ActorType, Currency
@@ -33,7 +32,7 @@ class Actor(BaseModel):
 
     actor_id: str
     actor_type: ActorType
-    display_name: Optional[str] = None
+    display_name: str | None = None
     authority: Authority = Field(default_factory=Authority)
     active: bool = True
 
@@ -43,6 +42,6 @@ class Session(BaseModel):
 
     session_id: str
     actor_id: str
-    ip_address: Optional[str] = None
-    user_agent: Optional[str] = None
-    created_at: Optional[str] = None
+    ip_address: str | None = None
+    user_agent: str | None = None
+    created_at: str | None = None

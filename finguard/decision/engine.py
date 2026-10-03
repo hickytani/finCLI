@@ -63,7 +63,7 @@ class DecisionReceipt(BaseModel):
     approval_state: str = "not_required"
     final_decision: str
     reasons: list[str] = Field(default_factory=list)
-    timestamp: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
+    timestamp: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC))
 
     def receipt_hash(self) -> str:
         return sha256_hash(canonical_serialize(self.model_dump(mode="json")))
@@ -207,6 +207,10 @@ class DecisionEngine:
                             display_name=actor.display_name,
                             active=actor.active,
                         ))
+                    if transaction.nonce:
+                        duplicate_nonce = session.query(NonceRecord).filter(NonceRecord.nonce == transaction.nonce).first()
+                        if duplicate_nonce is not None:
+                            raise ValueError(f"Replay attempt: nonce '{transaction.nonce}' was already used")
                     record = TransactionRecord(
                         transaction_id=transaction.transaction_id,
                         actor_id=transaction.actor_id,
@@ -227,7 +231,8 @@ class DecisionEngine:
                         policy_version=transaction.policy_version,
                     )
                     session.add(record)
-                    session.add(NonceRecord(nonce=transaction.nonce, transaction_id=transaction.transaction_id))
+                    if transaction.nonce:
+                        session.add(NonceRecord(nonce=transaction.nonce, transaction_id=transaction.transaction_id))
 
                     self._decision_checkpoint("after_validation")
                     risk = RiskEngine(session=session).analyze(transaction, actor)
@@ -312,7 +317,7 @@ class DecisionEngine:
                     self._decision_checkpoint("before_commit")
             finally:
                 session.close()
-        except Exception as exc:
+        except (RuntimeError, ValueError, TypeError) as exc:
             transaction.state = TransactionState.BLOCKED
             reason = f"FAIL_CLOSED: {type(exc).__name__}: {exc}"
             receipt = DecisionReceipt(transaction_id=transaction.transaction_id, canonical_version=2, transaction_hash=transaction.transaction_hash(), actor_id=transaction.actor_id, actor_type=actor.actor_type.value if actor else None, amount=transaction.money.to_decimal_string(), amount_minor=transaction.amount_minor, currency=transaction.currency.value, destination=transaction.to_account, authority_allowed=False, authority_reasons=[reason], policy_integrity="UNKNOWN", ai_assessment=ai_assessment or {"status": "NOT_PROVIDED"}, final_decision=DecisionType.BLOCK.value, reasons=[reason])

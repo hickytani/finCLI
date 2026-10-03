@@ -5,6 +5,7 @@ transaction ID and independently verifies the signed canonical transaction.
 """
 import json
 import uuid
+from typing import ClassVar
 
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError as SqlIntegrityError
@@ -42,7 +43,7 @@ def _execution_checkpoint(stage: str) -> None:
 class FinancialSimulator:
     """Settlement boundary for virtual INR accounts, never a real payment rail."""
 
-    DEFAULT_ACCOUNTS = {
+    DEFAULT_ACCOUNTS: ClassVar[dict[str, int]] = {
         "treasury": 1_000_000_000,  # 10,000,000.00 INR in paise
         "vendor-a": 0,
         "vendor-b": 0,

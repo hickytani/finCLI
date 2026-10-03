@@ -6,6 +6,7 @@ SECURITY PROPERTY:
 """
 
 from pathlib import Path
+
 import yaml
 
 from finguard.core.errors import ConfigurationError

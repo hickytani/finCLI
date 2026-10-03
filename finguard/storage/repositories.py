@@ -10,7 +10,6 @@ Wrap database errors to prevent information leakage.
 import datetime
 import re
 from decimal import Decimal, InvalidOperation
-from typing import Optional
 
 from sqlalchemy import and_, func, or_, update
 from sqlalchemy.orm import Session
@@ -69,7 +68,7 @@ class TransactionRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def get_by_idempotency_key(self, idempotency_key: str) -> Optional[TransactionRecord]:
+    def get_by_idempotency_key(self, idempotency_key: str) -> TransactionRecord | None:
         if not idempotency_key:
             return None
         return (
@@ -121,7 +120,7 @@ class TransactionRepository:
         if commit:
             self.session.commit()
 
-    def get(self, transaction_id: str) -> Optional[TransactionRecord]:
+    def get(self, transaction_id: str) -> TransactionRecord | None:
         return self.session.get(TransactionRecord, transaction_id)
 
     def list_all(self, limit: int = 50) -> list[TransactionRecord]:
@@ -173,14 +172,14 @@ class TransactionRepository:
 
     def search(
         self,
-        actor_id: Optional[str] = None,
-        state: Optional[str] = None,
-        to_account: Optional[str] = None,
-        from_account: Optional[str] = None,
-        since: Optional[datetime.datetime] = None,
-        until: Optional[datetime.datetime] = None,
-        min_amount: Optional[str | int] = None,
-        max_amount: Optional[str | int] = None,
+        actor_id: str | None = None,
+        state: str | None = None,
+        to_account: str | None = None,
+        from_account: str | None = None,
+        since: datetime.datetime | None = None,
+        until: datetime.datetime | None = None,
+        min_amount: str | int | None = None,
+        max_amount: str | int | None = None,
         offset: int = 0,
         limit: int = _INVESTIGATION_DEFAULT_LIMIT,
     ) -> list[TransactionRecord]:
@@ -216,14 +215,14 @@ class TransactionRepository:
 
     def count_search(
         self,
-        actor_id: Optional[str] = None,
-        state: Optional[str] = None,
-        to_account: Optional[str] = None,
-        from_account: Optional[str] = None,
-        since: Optional[datetime.datetime] = None,
-        until: Optional[datetime.datetime] = None,
-        min_amount: Optional[str | int] = None,
-        max_amount: Optional[str | int] = None,
+        actor_id: str | None = None,
+        state: str | None = None,
+        to_account: str | None = None,
+        from_account: str | None = None,
+        since: datetime.datetime | None = None,
+        until: datetime.datetime | None = None,
+        min_amount: str | int | None = None,
+        max_amount: str | int | None = None,
     ) -> int:
         """Count total matching rows for search — used to compute pagination metadata."""
         q = self.session.query(TransactionRecord)
@@ -256,7 +255,7 @@ class ActorRepository:
         self.session.merge(record)
         self.session.commit()
 
-    def get(self, actor_id: str) -> Optional[ActorRecord]:
+    def get(self, actor_id: str) -> ActorRecord | None:
         return self.session.get(ActorRecord, actor_id)
 
     def list_all(self) -> list[ActorRecord]:
@@ -292,7 +291,7 @@ class ApprovalRepository:
         self.session.merge(record)
         self.session.commit()
 
-    def get_request(self, transaction_id: str) -> Optional[ApprovalRequestRecord]:
+    def get_request(self, transaction_id: str) -> ApprovalRequestRecord | None:
         return (
             self.session.query(ApprovalRequestRecord)
             .filter(ApprovalRequestRecord.transaction_id == transaction_id)
@@ -334,7 +333,7 @@ class AuditRepository:
             .all()
         )
 
-    def get_latest(self) -> Optional[AuditEntryRecord]:
+    def get_latest(self) -> AuditEntryRecord | None:
         return (
             self.session.query(AuditEntryRecord)
             .order_by(AuditEntryRecord.seq.desc())
@@ -420,7 +419,7 @@ class IncidentRepository:
         self.session.merge(record)
         self.session.commit()
 
-    def get(self, incident_id: str) -> Optional[IncidentRecord]:
+    def get(self, incident_id: str) -> IncidentRecord | None:
         return self.session.get(IncidentRecord, incident_id)
 
     def list_all(self, limit: int = 50) -> list[IncidentRecord]:
@@ -465,10 +464,10 @@ class IncidentRepository:
         self,
         incident_id: str,
         new_state: str,
-        resolved_by: Optional[str] = None,
-        resolved_at: Optional[datetime.datetime] = None,
-        state_note: Optional[str] = None,
-    ) -> Optional[IncidentRecord]:
+        resolved_by: str | None = None,
+        resolved_at: datetime.datetime | None = None,
+        state_note: str | None = None,
+    ) -> IncidentRecord | None:
         """Update incident state in-place. Returns the updated record or None if not found.
 
         The returned record has all attributes eagerly loaded (expunged from session)
@@ -541,17 +540,17 @@ class ReceiptRepository:
         if commit:
             self.session.commit()
 
-    def get(self, receipt_id: str) -> Optional[DecisionReceiptRecord]:
+    def get(self, receipt_id: str) -> DecisionReceiptRecord | None:
         return self.session.get(DecisionReceiptRecord, receipt_id)
 
-    def get_by_transaction(self, transaction_id: str) -> Optional[DecisionReceiptRecord]:
+    def get_by_transaction(self, transaction_id: str) -> DecisionReceiptRecord | None:
         return (
             self.session.query(DecisionReceiptRecord)
             .filter(DecisionReceiptRecord.transaction_id == transaction_id)
             .first()
         )
 
-    def get_latest(self) -> Optional[DecisionReceiptRecord]:
+    def get_latest(self) -> DecisionReceiptRecord | None:
         return (
             self.session.query(DecisionReceiptRecord)
             .order_by(DecisionReceiptRecord.timestamp.desc())
@@ -589,7 +588,7 @@ class KeyRepository:
         self.session.merge(record)
         self.session.commit()
 
-    def get(self, key_id: str) -> Optional[KeyRecord]:
+    def get(self, key_id: str) -> KeyRecord | None:
         return self.session.get(KeyRecord, key_id)
 
     def list_all(self) -> list[KeyRecord]:

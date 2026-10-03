@@ -1,10 +1,12 @@
 """Unit tests for signed identity registry."""
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from finguard.core.enums import ActorType
 from finguard.core.errors import SecurityError
-from finguard.identity.registry import IdentityRegistry, ActorConfig
+from finguard.identity.registry import ActorConfig, IdentityRegistry
 
 
 def test_identity_registry_bootstrap_and_load(tmp_path: Path):

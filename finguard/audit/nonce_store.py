@@ -6,9 +6,10 @@ a transaction with a previously recorded nonce MUST be detected and rejected as
 a REPLAY_ATTEMPT, persisting across process restarts.
 """
 
-from typing import Optional
-from sqlalchemy.orm import Session
+
 from sqlalchemy.exc import IntegrityError as SqlIntegrityError
+from sqlalchemy.orm import Session
+
 from finguard.storage.database import get_session
 from finguard.storage.repositories import NonceRepository
 
@@ -16,7 +17,7 @@ from finguard.storage.repositories import NonceRepository
 class NonceStore:
     """Persistent SQLite-backed nonce store for replay protection."""
 
-    def __init__(self, session: Optional[Session] = None):
+    def __init__(self, session: Session | None = None):
         self._external_session = session
 
     def _get_session(self) -> tuple[Session, bool]:

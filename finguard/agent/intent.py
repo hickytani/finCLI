@@ -12,8 +12,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from finguard.agent.guardrails import AgentGuardrails
 from finguard.audit.ledger import AuditLedger
-from finguard.core.enums import ActorType, Currency
+from finguard.core.enums import ActorType, AgentRequestOutcome, AgentResource, Currency
 from finguard.core.errors import SecurityError
 from finguard.core.transaction import Transaction
 from finguard.decision import DecisionEngine, DecisionResult
@@ -225,19 +226,6 @@ class StructuredIntentBoundary:
                 )
                 raise
         else:
-            if self._nonce_is_used(nonce):
-                error = IntentValidationError(
-                    "NONCE_REPLAY",
-                    ["server-derived nonce is already bound to another transaction"],
-                    correlation_id=str(intent.correlation_id),
-                )
-                self._record_rejection(
-                    error,
-                    input_digest,
-                    str(intent.correlation_id),
-                    str(intent.intent_id),
-                )
-                raise error
             transaction = self._transaction_from_intent(
                 intent,
                 intent_digest,
@@ -246,6 +234,36 @@ class StructuredIntentBoundary:
                 nonce,
                 self._current_time(),
             )
+
+        guardrail_result = AgentGuardrails.evaluate(
+            actor=self._actor,
+            intent_id=str(intent.intent_id),
+            correlation_id=str(intent.correlation_id),
+            capability=intent.capability,
+            action=intent.action,
+            resource_type=AgentResource.TRANSACTION.value,
+            transaction=transaction,
+        )
+        self._audit(
+            "AGENT_GUARDRAIL_EVALUATED",
+            str(intent.correlation_id),
+            guardrail_result.model_dump(mode="json"),
+            transaction_id=transaction.transaction_id,
+            result=guardrail_result.status.value.upper(),
+        )
+        if guardrail_result.status == AgentRequestOutcome.DENY:
+            error = IntentValidationError(
+                guardrail_result.reason_code.value,
+                [guardrail_result.reason],
+                correlation_id=str(intent.correlation_id),
+            )
+            self._record_rejection(
+                error,
+                input_digest,
+                str(intent.correlation_id),
+                str(intent.intent_id),
+            )
+            raise error
 
         try:
             decision = DecisionEngine(registry=self._registry).decide(
@@ -273,6 +291,10 @@ class StructuredIntentBoundary:
                 ai_assessment=ai_assessment,
             )
 
+        guardrail_result = AgentGuardrails.record_core_outcome(
+            guardrail_result,
+            decision.decision,
+        )
         self._audit(
             "AGENT_INTENT_ACCEPTED",
             str(intent.correlation_id),
@@ -284,6 +306,8 @@ class StructuredIntentBoundary:
                 "receipt_id": decision.receipt.receipt_id,
                 "decision": decision.decision.value,
                 "authorization": "none",
+                "guardrail_status": guardrail_result.status.value,
+                "guardrail_reason_code": guardrail_result.reason_code.value,
             },
             transaction_id=decision.transaction.transaction_id,
             result="VALIDATED_NOT_AUTHORIZED",
@@ -513,14 +537,6 @@ class StructuredIntentBoundary:
         session = get_session()
         try:
             return TransactionRepository(session).get_by_idempotency_key(idempotency_key)
-        finally:
-            session.close()
-
-    @staticmethod
-    def _nonce_is_used(nonce: str) -> bool:
-        session = get_session()
-        try:
-            return session.get(NonceRecord, nonce) is not None
         finally:
             session.close()
 

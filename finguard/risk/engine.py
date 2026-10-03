@@ -12,12 +12,10 @@ Evaluates transaction risk synchronously at creation time using deterministic si
 Produces score (0-100), risk level (LOW/MEDIUM/HIGH/CRITICAL), signals list, and explanation.
 """
 
-import datetime
-from typing import Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from finguard.core.enums import SignalType, RiskLevel
+from finguard.core.enums import RiskLevel, SignalType
 from finguard.core.transaction import Transaction
 from finguard.identity.registry import ActorConfig
 from finguard.risk.destination import DestinationTracker
@@ -38,7 +36,7 @@ class RiskAnalysisResult(BaseModel):
 class RiskEngine:
     """Synchronous deterministic risk engine."""
 
-    def __init__(self, session: Optional[Session] = None):
+    def __init__(self, session: Session | None = None):
         self._external_session = session
 
     def _get_session(self) -> tuple[Session, bool]:
@@ -48,7 +46,6 @@ class RiskEngine:
 
     def analyze(self, transaction: Transaction, actor: ActorConfig) -> RiskAnalysisResult:
         """Analyze transaction for risk signals."""
-        from decimal import Decimal
         from finguard.money import Money
         session, is_local = self._get_session()
         try:
@@ -56,7 +53,6 @@ class RiskEngine:
             score = 0
 
             # Convert actor authority limit to minor units for exact integer comparison
-            currency_str = actor.authority_currency.value
             limit_minor = Money.from_decimal(
                 actor.authority_limit, actor.authority_currency
             ).minor_units

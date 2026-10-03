@@ -1,15 +1,14 @@
 """CLI commands for policy validation and testing."""
 
-from pathlib import Path
 import typer
 from rich.console import Console
 from rich.panel import Panel
 
-from finguard.core.enums import Currency, ActorType
+from finguard.core.enums import ActorType
 from finguard.core.transaction import Transaction
 from finguard.identity.registry import ActorConfig
-from finguard.policy.parser import load_policy_from_yaml
 from finguard.policy.engine import PolicyEngine
+from finguard.policy.parser import load_policy_from_yaml
 
 console = Console()
 
@@ -22,9 +21,9 @@ def do_policy_validate(path: str):
         console.print(f"Policy ID:  [cyan]{policy.policy_id}[/cyan]")
         console.print(f"Version:    [cyan]{policy.version}[/cyan]")
         console.print(f"Description:[white]{policy.description or 'None'}[/white]")
-    except Exception as e:
-        console.print(f"[bold red]✗ INVALID POLICY FILE:[/bold red] {e}")
-        raise typer.Exit(code=1)
+    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+        console.print(f"[bold red]✗ INVALID POLICY FILE:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
 
 
 def do_policy_test(path: str):
@@ -39,7 +38,7 @@ def do_policy_test(path: str):
             actor_type=ActorType.AGENT,
             display_name="Test Agent",
             authority_limit=10000.0,
-            allowed_destinations=["vendor-a", "vendor-b"]
+            allowed_destinations=["vendor-a", "vendor-b"],
         )
 
         sample_txs = [
@@ -59,9 +58,9 @@ def do_policy_test(path: str):
                 f"Decision:           [{color}]{decision.decision_type.value.upper()}[/{color}]\n"
                 f"Required Approvals: [bold]{decision.required_approvals}[/bold]\n"
                 f"Explanation:        [dim]{decision.explanation}[/dim]",
-                border_style="cyan"
+                border_style="cyan",
             ))
 
-    except Exception as e:
-        console.print(f"[bold red]Error testing policy:[/bold red] {e}")
-        raise typer.Exit(code=1)
+    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+        console.print(f"[bold red]Error testing policy:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc

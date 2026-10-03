@@ -1,21 +1,21 @@
 """CLI commands for deep forensic transaction investigation."""
 
 import json
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
 from finguard.approvals.service import ApprovalService
 from finguard.audit.nonce_store import NonceStore
 from finguard.core.transaction import Transaction
-from finguard.money import Money
 from finguard.identity.registry import IdentityRegistry
 from finguard.incidents.service import IncidentService
+from finguard.money import Money
 from finguard.policy.engine import PolicyEngine
 from finguard.risk.engine import RiskEngine
 from finguard.storage.database import get_session
-from finguard.storage.repositories import TransactionRepository, AuditRepository
+from finguard.storage.repositories import AuditRepository, TransactionRepository
 
 console = Console()
 

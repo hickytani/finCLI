@@ -279,9 +279,7 @@ class AuditLedger:
                 timestamp = entry["timestamp"]
                 if not isinstance(timestamp, str):
                     return False
-                parsed_timestamp = datetime.datetime.fromisoformat(
-                    timestamp.replace("Z", "+00:00")
-                ).replace(tzinfo=None)
+                parsed_timestamp = datetime.datetime.fromisoformat(timestamp).replace(tzinfo=None)
                 recomputed = _compute_entry_hash(
                     previous_hash=entry["previous_hash"],
                     timestamp_iso=parsed_timestamp.isoformat(),

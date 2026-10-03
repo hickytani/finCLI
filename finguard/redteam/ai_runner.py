@@ -1,16 +1,16 @@
 """One-shot adversarial evaluation using the real local AI adapter."""
-from contextlib import contextmanager
 import os
-from pathlib import Path
 import tempfile
-from typing import Callable, Iterator
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from pathlib import Path
 
+from finguard.agent import TreasuryAgent
 from finguard.ai.analyzer import LocalAIAnalyzer
 from finguard.ai.model import OllamaModel
-from finguard.agent import TreasuryAgent
 from finguard.core.config import reset_config
 from finguard.core.errors import SecurityError
-from finguard.redteam.ai_catalog import AIAttackCase, AI_ATTACK_CATALOG
+from finguard.redteam.ai_catalog import AI_ATTACK_CATALOG, AIAttackCase
 from finguard.signing import SigningGate
 from finguard.simulator import FinancialSimulator, SimulatorError
 from finguard.storage.database import init_db, reset_db

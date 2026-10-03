@@ -362,7 +362,7 @@ def test_execution_rejects_transaction_mutation_after_signing(bind_actor_key):
         actor_id="operator-1", from_account="treasury", to_account="vendor-a",
         amount="125.00", currency=Currency.INR,
     )
-    result = DecisionEngine().decide(tx)
+    DecisionEngine().decide(tx)
     Keystore().create_keypair("post-sign-mutation-key", "test-password")
     bind_actor_key("operator-1", "post-sign-mutation-key")
     SigningGate().sign(tx.transaction_id, "post-sign-mutation-key", "test-password")

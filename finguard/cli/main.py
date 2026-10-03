@@ -16,6 +16,7 @@ Usage:
 """
 
 import sys
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -32,10 +33,12 @@ if sys.platform == "win32":
 from finguard import __version__
 from finguard.core.config import get_config
 from finguard.identity.registry import IdentityRegistry
-from finguard.storage.database import init_db, get_session
+from finguard.storage.database import get_session, init_db
 from finguard.storage.repositories import (
-    TransactionRepository, ActorRepository, AuditRepository,
-    IncidentRepository, KeyRepository,
+    AuditRepository,
+    IncidentRepository,
+    KeyRepository,
+    TransactionRepository,
 )
 
 console = Console()
@@ -85,13 +88,13 @@ app.add_typer(investigate_app, name="investigate")
 
 
 # ── Investigate commands ───────────────────────────────────────────────
-from finguard.cli.investigation_commands import (  # noqa: E402
-    do_incident_trace,
-    do_tx_trace,
-    do_event_search,
+from finguard.cli.investigation_commands import (
     do_actor_profile,
+    do_event_search,
     do_incident_timeline,
+    do_incident_trace,
     do_incident_transition,
+    do_tx_trace,
 )
 
 
@@ -184,8 +187,8 @@ def investigate_transition(
 def decision_inspect(transaction_id: str = typer.Argument(help="Transaction ID.")):
     """Inspect the latest canonical decision receipt for a transaction."""
     _ensure_init()
+
     from finguard.storage.repositories import ReceiptRepository
-    import json
     session = get_session()
     try:
         receipt = ReceiptRepository(session).get_by_transaction(transaction_id)
@@ -200,16 +203,18 @@ def decision_inspect(transaction_id: str = typer.Argument(help="Transaction ID."
 def agent_run(task: str = typer.Argument(help="Natural-language payment task.")):
     """Run the bounded treasury agent (never grants signing authority)."""
     _ensure_init()
-    from finguard.agent import TreasuryAgent
     import json
+
+    from finguard.agent import TreasuryAgent
     console.print(json.dumps(TreasuryAgent().run(task), indent=2))
 
 
 @agent_app.command("status")
 def agent_status():
     """Show the configured agent model state."""
-    from finguard.ai.model import OllamaModel
     import json
+
+    from finguard.ai.model import OllamaModel
     console.print(json.dumps(OllamaModel().status(), indent=2))
 
 
@@ -217,8 +222,9 @@ def agent_status():
 def simulator_balances():
     """Show virtual account balances; this never accesses real money."""
     _ensure_init()
-    from finguard.simulator import FinancialSimulator
     import json
+
+    from finguard.simulator import FinancialSimulator
     console.print(json.dumps(FinancialSimulator().balances(), indent=2))
 
 
@@ -226,13 +232,14 @@ def simulator_balances():
 def simulator_execute(transaction_id: str = typer.Argument(help="FinGuard-signed transaction ID.")):
     """Execute a signed transaction in the local simulator only."""
     _ensure_init()
-    from finguard.simulator import FinancialSimulator
     import json
+
+    from finguard.simulator import FinancialSimulator
     try:
         console.print(json.dumps(FinancialSimulator().execute(transaction_id), indent=2))
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError) as exc:
         console.print(f"[bold red]SIMULATOR BLOCKED:[/bold red] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
 
 def _ensure_init() -> None:
