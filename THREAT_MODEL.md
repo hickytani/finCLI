@@ -13,8 +13,8 @@ CLI/SDK path. The decision/approval/signing/execution chain now carries the
 canonical v2 transaction hash and persisted lifecycle-version evidence; approval
 and signer keys must match public keys in the root-signed identity registry.
 This is not a proof of a universal **NO**. Decision, approval, signing, and
-synthetic execution writes now use local SQLite transaction boundaries that
-include their required database evidence; deterministic injected failures and
+synthetic execution writes use local SQLite transaction boundaries that include
+their required database evidence; deterministic injected failures and
 separate-session thread tests exercise rollback, retry, and one-effect behavior.
 Separate-OS-process signing and execution races are tested: exactly one signing
 process stores a valid signature and one signing audit entry; competing
@@ -22,17 +22,16 @@ execution processes observe one stored result and produce one financial effect.
 Injected failures across decision, approval, signing, and execution paths roll
 back their partial writes; fresh-session reads and exact-operation retries
 verify recovery. Abrupt process termination during commit remains untested.
-Signatures cover canonical v2 transaction bytes but do not directly include the
-database lifecycle-version counter. That counter is not request-supplied
-authority data: it is a persistence CAS token, checked against the versioned
-decision/approval/signing evidence and current row before execution. This
-protects against stale lifecycle state when the linked evidence is unchanged,
-but is not cryptographic protection against an attacker who can rewrite the
-entire SQLite file and recompute its uncheckpointed hash chain. Binding the
-counter into a signed envelope would change the signing contract and requires
-separate G6 review; it is intentionally outside M2.2. The hash ledger has local, identity-key-signed sequence checkpoints; it has no
-external anchor. No product MCP server exists, and claims must remain limited
-to behaviors with passing tests and measured evaluation evidence.
+
+M4 adds a bounded orchestrator around this path. The orchestrator is not
+authority. It records state, budgets, tool observations, and guardrail checks,
+but it cannot approve, sign, authorize, or mutate funds. Tool output is treated
+as untrusted data only; it cannot alter capabilities, approval state, or
+execution permission. Replanning is constrained to the original run budget and
+boundaries.
+
+No product MCP server exists, and claims must remain limited to behaviors with
+passing tests and measured evaluation evidence.
 
 ---
 

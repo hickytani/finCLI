@@ -65,6 +65,24 @@ class AgentRequestOutcome(str, Enum):
 
 
 @unique
+class OrchestrationState(str, Enum):
+    """Explicit state machine for the bounded M4 orchestration layer."""
+
+    REQUESTED = "requested"
+    PLANNING = "planning"
+    TOOL_CALL = "tool_call"
+    OBSERVATION = "observation"
+    GUARDRAIL_CHECK = "guardrail_check"
+    REPLAN = "replan"
+    APPROVAL_REQUIRED = "approval_required"
+    EXECUTION_BOUNDARY = "execution_boundary"
+    COMPLETED = "completed"
+    REJECTED = "rejected"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@unique
 class TransactionState(str, Enum):
     """Lifecycle state of a transaction."""
     CREATED = "created"

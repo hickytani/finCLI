@@ -1,13 +1,35 @@
 # FIN//GUARD Master Architecture and Roadmap
 
-## Current Implementation Status (M3.1)
+## Current Implementation Status (M4)
 
-The active M3.1 work branch is `m3.1-structured-intent`, based on
-`24c8732` (`feat(m2): add signed sequenced ledger checkpoints`). M1/M2.1/M2.2
-and M2.3 are the preserved baseline; M2.3 implements sequenced ledger entries
-and identity-key-signed local checkpoints. External anchoring is not
-implemented. The older M2.2 snapshot and counts below are historical, not
-current validation results for M3.1.
+The active milestone is `m4-bounded-orchestration`. It adds a bounded orchestration
+layer around the existing deterministic authority path; it does not replace the
+core financial approval/signing/execution pipeline.
+
+The implemented architecture is:
+
+```text
+Agent / StructuredIntent -> M3.2 Guardrails -> DecisionEngine -> Approval -> Signing -> Simulator
+                               ^
+                               |
+                       bounded M4 orchestrator
+```
+
+The orchestrator tracks state, step/tool budgets, deadlines, and guardrail
+checks, but it never becomes authority. It cannot approve, sign, execute, or
+mutate policy or financial state directly. The actual financial path remains the
+existing FinGuard decision and execution chain.
+
+M3.1 remains the structured intent boundary and M3.2 remains the guardrail
+filter; M4 adds deterministic orchestration around them. The roadmap sequence is:
+
+- M3.1 — Structured Intent
+- M3.2 — Deterministic Guardrails
+- M3.3 — Adversarial Agent Harness
+- M4 — Bounded Agent Orchestration
+- M5 — MCP Security Boundary
+- M6 — Agentic Security Evaluation / Red Team
+- M7 — Research / Distribution
 
 M3.1 adds `finguard/agent/intent.py` as a deterministic input boundary above
 the existing core. The SDK proposal path now parses strict `StructuredIntent`,
