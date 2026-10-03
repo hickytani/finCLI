@@ -35,19 +35,21 @@
 - [ ] Independent verifier sign-off and human approval for canonical byte/golden-vector change (G6).
 - [x] Previously failing `test_redteam_hardening_pass.py` cases now pass in the current full-suite run (207 passed).
 - [ ] Finish legacy database audit/quarantine/rollback and actual pre-change v1 artifact verification.
-- [ ] Signed ledger checkpoints/external anchoring remain necessary against full SQLite-file rewrite.
+- [x] M2.3 local sequenced, identity-key-signed ledger checkpoints implemented; external anchoring remains necessary against replacement of the entire database.
 
 ### M2 - Integrity and Atomicity (FG-301, FG-302, FG-303, FG-304)
 - [x] Transaction row version and decision-path CAS state update; exact completed idempotency retry returns its stored receipt/result, changed signed content with a reused key is rejected.
-- [-] M2.1 authority-chain core: decision receipt/hash/version, signed-registry approver/signer keys, version-bound approvals, signing CAS, execution-time chain verification, and execution CAS with balance/unique-result transaction. Signature bytes do not bind lifecycle version; process-level and crash-boundary proofs remain open.
-- [x] M2.2 requested acceptance: decision/nonce/receipt/audit, approval/signing evidence, and simulator execution share SQLite transactions; injected rollback/reload/retry tests pass; execution alone uses `BEGIN IMMEDIATE` + 5000 ms busy timeout; spawned-process retries return one result/effect. Forced process death and process-level decision/signing races remain follow-up work.
+- [x] M2.1 authority-chain core: decision receipt/hash/version, signed-registry approver/signer keys, version-bound approvals, signing CAS, execution-time chain verification, and execution CAS with balance/unique-result transaction. Signature bytes do not directly bind lifecycle version; this remains documented separately from the canonical transaction signature.
+- [x] M2.2: decision/nonce/receipt/audit, approval/signing evidence, and simulator execution share SQLite transactions; injected rollback/reload/retry tests pass; execution alone uses `BEGIN IMMEDIATE` + 5000 ms busy timeout; process-level signing and execution races prove one valid winner/effect. Abrupt process death remains untested.
 - [ ] Review whether signing bytes must include lifecycle version; current signature remains over canonical v2 bytes and signed-version evidence is checked separately. Any signature-envelope change requires crypto/security review.
 - [ ] FG-301: Atomic Unit of Work for decision pipeline (single session, `BEGIN IMMEDIATE`, SQLite WAL).
 - [x] FG-302: CAS signing gate (`UPDATE ... WHERE state = expected`) and simulator execution CAS.
-- [ ] FG-303: Monotonic `seq` ledger, SQLite triggers, signed checkpoints `{seq, head_hash, ts, key_id, signature}`.
+- [x] FG-303 / M2.3: Monotonic ledger sequence, canonical signed checkpoints, previous-checkpoint linkage, identity/key registry binding, atomic checkpoint creation, and offline verification.
 - [ ] FG-304: Unified aware-UTC `Clock` service; remove naive `_utcnow()` shim.
 
 ### M3 - LLM Provider Layer & Evaluation Harness (FG-401)
+- [x] M3.1: Strict versioned `StructuredIntent` boundary above the existing deterministic transaction core; no new authority, approval, signing, execution, MCP, or autonomous loop.
+- [x] M3.1 validation: 43 intent-boundary tests pass; 82 focused boundary/regression tests pass; full suite passes (282); selected Ruff and `git diff --check` pass.
 - [ ] FG-401: `LLMProvider` protocol (Ollama & OpenAI-compatible HTTP providers).
 - [ ] FG-401: Evaluation harness (benign + attack catalog with >= 30 variants per category).
 - [ ] FG-401: Multi-model evaluation report (`docs/RESULTS.md`) with Wilson 95% CIs.

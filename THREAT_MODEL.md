@@ -30,8 +30,8 @@ protects against stale lifecycle state when the linked evidence is unchanged,
 but is not cryptographic protection against an attacker who can rewrite the
 entire SQLite file and recompute its uncheckpointed hash chain. Binding the
 counter into a signed envelope would change the signing contract and requires
-separate G6 review; it is intentionally outside M2.2. The hash ledger has no
-signed checkpoint, no product MCP server exists, and claims must remain limited
+separate G6 review; it is intentionally outside M2.2. The hash ledger has local, identity-key-signed sequence checkpoints; it has no
+external anchor. No product MCP server exists, and claims must remain limited
 to behaviors with passing tests and measured evaluation evidence.
 
 ---
@@ -102,3 +102,43 @@ to behaviors with passing tests and measured evaluation evidence.
 
 - **Single-Machine Runtime**: The MVP operates as a local CLI tool and SQLite database. Distributed HSMs, MPC, and multi-region consensus are outside MVP scope.
 - **Local Root Key Storage**: For demonstration purposes, `root_operator.key` is generated in `.finguard/`. In production, this key should reside on an air-gapped physical token or hardware security module.
+
+## 6. M3.1 Structured Intent Boundary
+
+The model/agent output is hostile proposal data, not authority. The SDK
+converts it into a versioned `StructuredIntent` and sends it through bounded
+JSON parsing, duplicate-field rejection, strict schema validation, exact-money
+parsing, fixed action/capability checks, and a registry-bound active AGENT
+identity check. The agent cannot choose its effective identity, transaction
+timestamp, nonce, operation, approval, signer, signature, decision, lifecycle
+state, or execution path. Its intent ID anchors replay identity; the nonce is
+domain-separated and derived by the boundary from the bound actor and intent
+ID.
+
+The intent is normalized and domain-separated for its digest. Its digest and
+fixed requested action/capability are embedded in transaction metadata, which
+is covered by the existing canonical-v2 transaction hash. The existing
+DecisionEngine, ApprovalService, SigningGate, simulator, and checkpointed
+audit ledger remain authoritative. A proposal accepted by the intent boundary
+is not an authorization event and cannot directly move balances.
+
+The intent schema rejects malformed/ambiguous input, duplicate or unexpected
+fields, unsupported action/capability, invalid identities, invalid exact
+amounts, unresolved recipient placeholders, authority-like fields, and
+oversized input/context. Descriptive reason/context strings are never
+interpreted as instructions by this boundary. It does not claim to recognize
+all natural-language prompt injection; its guarantee is that text cannot grant
+authority or call an execution tool.
+
+An exact replay reuses the stored transaction timestamp and must match the
+stored intent digest, canonical transaction hash, transaction ID, idempotency
+key, and nonce record. Conflicting intent-ID reuse is rejected; a
+caller-supplied nonce is rejected, and distinct intent IDs derive distinct
+nonces. Existing decision/simulator idempotency controls prevent a duplicate
+financial effect. Intent receipt/accept/rejection events are
+supplementary appends to the existing ledger; they do not replace the atomic
+decision/receipt/ledger transaction.
+
+M3.1 does not implement MCP, autonomous planning/loops, external model APIs,
+general tool execution, or an injection classifier. External anchoring of
+signed ledger checkpoints remains a separate future control.

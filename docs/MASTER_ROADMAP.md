@@ -1,5 +1,29 @@
 # FIN//GUARD Master Architecture and Roadmap
 
+## Current Implementation Status (M3.1)
+
+The active M3.1 work branch is `m3.1-structured-intent`, based on
+`24c8732` (`feat(m2): add signed sequenced ledger checkpoints`). M1/M2.1/M2.2
+and M2.3 are the preserved baseline; M2.3 implements sequenced ledger entries
+and identity-key-signed local checkpoints. External anchoring is not
+implemented. The older M2.2 snapshot and counts below are historical, not
+current validation results for M3.1.
+
+M3.1 adds `finguard/agent/intent.py` as a deterministic input boundary above
+the existing core. The SDK proposal path now parses strict `StructuredIntent`,
+checks exact money and the configured active AGENT registry identity, then binds
+the normalized intent digest into metadata covered by the existing canonical
+v2 transaction hash. The unchanged `DecisionEngine`, approval, signing, and
+simulator services remain authoritative. This milestone adds no MCP, planner,
+autonomous loop, or external model API. See
+[`M3.1-STRUCTURED-INTENT.md`](./M3.1-STRUCTURED-INTENT.md) for the complete
+boundary and limitations. Validation on Python 3.13.7: 43 intent-boundary
+tests passed, 82 focused boundary/regression tests passed, and the full suite
+passed (282 tests). Selected Ruff checks and `git diff --check` passed. Existing
+SQLAlchemy `datetime.utcnow()` deprecation warnings remain.
+The next planned milestone is M3.2 deterministic agent guardrails; it is not
+implemented by this change.
+
 **State snapshot:** 2026-10-02, branch `m1-money`, baseline commit `4a8461f`
 with uncommitted M2.2 changes. This describes observed code and tests, not
 historical reports or intended architecture. No release approval is implied.
@@ -31,9 +55,10 @@ historical reports or intended architecture. No release approval is implied.
 
 ```mermaid
 flowchart TD
-    Request[Untrusted model, SDK, or CLI request] --> Input[TransactionExtraction / Transaction + Money]
+    Request[Untrusted model, SDK, or CLI request] --> Intent[StructuredIntent validation and canonicalization]
+    Intent --> Input[Canonical-v2 Transaction + Money]
     Input --> Decision[DecisionEngine]
-    AI[OllamaModel via LocalAIAnalyzer] --> Input
+    AI[OllamaModel via LocalAIAnalyzer] --> Intent
     Registry[Root-signed identities.yaml] --> Decision
     Decision --> Policy[PolicyEngine: exact limits and currency checks]
     Decision --> Risk[RiskEngine: deterministic signals]
@@ -68,14 +93,15 @@ boundary.
 | Component | Current inputs/outputs and authority | State mutation / signing / execution | Evidence and gap |
 | --- | --- | --- | --- |
 | AI (`finguard/ai`, `agent/treasury.py`) | Local Ollama JSON is untrusted; schema yields amount/currency/destination/purpose and advisory analysis | No signing or execution capability | Local AI and AI attack tests; no provider protocol, model digest/run manifest, or CI-stable external evaluation |
-| SDK / CLI | SDK and agent CLI submit to `DecisionEngine`; operator CLI exposes admin, approve and sign commands | SDK cannot sign/approve/execute; local operator CLI has privileged commands | SDK capability test and CLI help; no server-bound MCP identity |
+| SDK / CLI | SDK and agent CLI submit proposals through `StructuredIntentBoundary` to `DecisionEngine`; operator CLI exposes admin, approve and sign commands | SDK cannot sign/approve/execute; local operator CLI has privileged commands | Structured-intent security tests and CLI help; no server-bound MCP identity |
 | Money / transaction | `Money` is positive integer minor units plus INR/USD/EUR/JPY/KWD; `Transaction` defaults/fixes new transactions to canonical v2 | In-memory domain state only | Unit/property/regression tests; exact legacy database migration only partly verified |
 | Identity / authority | Root-signed YAML registry with per-actor source/destination allowlists, authority limit and authority currency | Root key can mutate registry; decision path consumes actor configuration | Tests prove source lists load, empty grants deny, agent/literal wildcard denies, trusted operator wildcard use is recorded; AccountRegistry/alias resolution absent |
 | Decision / policy / risk | `DecisionEngine` combines actor authority, policy, risk, nonce claim and receipt | Transaction, nonce, optional approval request, lifecycle CAS, receipt, and DECISION audit append share one SQLite transaction | Full suite and injected receipt/pre-commit rollback tests; process-level decision contention remains untested |
 | Approval | Approval binds hash, policy request, expiry, prospective approved version, and approver key from the root-signed identity registry | Approval row, request count/state, optional APPROVED CAS, and approval audit share one transaction | Stale-version, key-substitution, forged-state, duplicate-approval, and evidence-failure rollback tests |
 | Signing | Revalidates receipt, policy, authority, approval, signer identity key and authorized row version; signature remains over canonical v2 transaction bytes | Signature/key/signed version and SIGNED transition use row-level CAS with signing audit in the same transaction | Threaded and spawned-process exactly-one-signature tests plus evidence-failure rollback/retry; lifecycle counter is cross-checked in stored evidence but not directly signed, and full-database rewrite resistance is out of scope |
-| Simulator | Revalidates decision/audit, policy, authority, approval, signer evidence, canonical hash and Ed25519 signature | `BEGIN IMMEDIATE` serializes the settlement read/validate/write boundary before transaction/evidence reads; balance debit/credit, unique execution row, EXECUTED CAS, and execution audit evidence share that transaction | Immediate-lock SQL trace, six deterministic rollback/reload/retry checkpoints, evidence consistency, idempotent replay, separate-session thread race, and spawned-process single-effect test; forced process death and signed checkpoints absent |
-| Audit / attestation | SQLite hash chain; Ed25519 attestation checked against local configured key/live root | Appends audit; generates signed artifact | Ordinary row-tamper and attestation tests; no sequence numbers, append-only triggers, signed checkpoints, or external anchoring |
+| Simulator | Revalidates decision/audit, policy, authority, approval, signer evidence, canonical hash and Ed25519 signature | `BEGIN IMMEDIATE` serializes the settlement read/validate/write boundary before transaction/evidence reads; balance debit/credit, unique execution row, EXECUTED CAS, and execution audit evidence share that transaction | Immediate-lock SQL trace, injected rollback/reload/retry, idempotent replay, separate-session thread race, and spawned-process single-effect test; forced process death remains untested |
+| Audit / attestation | Sequenced SQLite hash chain; identity-key-bound Ed25519 checkpoints and attestation | Appends sequence-linked audit events; checkpoint creation binds sequence, head, prior checkpoint hash, signer identity and key | Checkpoint canonicalization, identity binding, atomic creation, offline verification, tampering and process-append tests; external anchoring is absent |
+| Structured intent (M3.1) | Untrusted SDK/agent proposal is strict-schema validated, identity-bound and converted to an existing canonical-v2 transaction | No direct state mutation, approval, signing, or execution; dispatches only to `DecisionEngine` | 43 focused boundary tests and full suite (282 tests) passed |
 | Engineering MCP | `tools/devtools_mcp.py` tools run tests/attacks/bench and read task/invariant docs | Can launch repository commands; no transaction authority | Path jail is used for documentation reads; not a security MCP implementation |
 
 ## Trust Boundaries
@@ -86,11 +112,16 @@ boundary.
   approval identities, trusted local signing/attestor public keys.
 - **Sensitive authority:** root key, signing keys, approval authority, policy
   and identity mutation, transaction-signing gate, simulator execution.
-- **Database boundary:** row edits to transaction/receipt are detected against
-  an untouched decision audit entry. The audit chain is unsigned and stored in
-  the same database; a privileged writer able to rewrite the entire SQLite
-  file can recompute the unkeyed chain. Do not claim resistance to that attack
-  until signed checkpoints/external anchoring exist.
+- **Database boundary:** transaction/receipt edits are checked against decision,
+  approval, signing, execution, and checkpoint evidence. Locally signed
+  checkpoints protect the ledger prefix they cover against rewriting without
+  the registry-bound signing key. No external anchor prevents deletion or
+  replacement of the entire database together with its latest unanchored
+  checkpoint.
+- **Agent boundary:** intent text and context are hostile data. The boundary
+  admits only one fixed proposal action/capability and has no general tool
+  execution path. It rejects authority-shaped schema fields, but does not
+  attempt to semantically classify every prompt-injection string.
 - **MCP boundary:** product MCP does not exist; security properties for it are
   unproven. Devtools MCP is not evidence for transaction MCP isolation.
 
@@ -117,7 +148,14 @@ write paths. M5 checkpoint work owns signing/ledger code and must be serialized
 with M2. M6 consumes the stable M3/M4/M5 interfaces; M7 follows reproducible
 results, not before.
 
-## Requirement Traceability
+## Historical M2.2 Snapshot (Not Current Status)
+
+The remaining requirement-traceability notes and publication report below were
+written against the pre-M2.3 `4a8461f` snapshot. They are retained as a
+historical record only and are superseded by the current implementation status
+at the top of this document and by M3.1-specific details in
+[`M3.1-STRUCTURED-INTENT.md`](./M3.1-STRUCTURED-INTENT.md). In particular,
+their statements that M2.3 checkpoints do not exist are obsolete.
 
 ### M2.2 Completed Guarantees
 

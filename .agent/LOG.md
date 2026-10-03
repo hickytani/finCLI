@@ -1,5 +1,40 @@
 # FIN//GUARD AGENT LOG
 
+## M3.1 Structured Intent Boundary
+
+- Work branch: `m3.1-structured-intent`, created from `24c8732`
+  (`feat(m2): add signed sequenced ledger checkpoints`); the existing
+  `m1-money` branch was left unchanged.
+- Inspected the existing canonical-v2 transaction, deterministic decision,
+  approval, signing, simulator, audit/checkpoint, SDK, and CLI paths before
+  implementation. The new boundary dispatches only to the existing
+  `DecisionEngine`; approval, signing, and execution remain in their existing
+  services.
+- Added strict version-1 `StructuredIntent`, bounded JSON parsing with duplicate
+  key rejection, exact-money validation, configured active AGENT identity
+  binding outside the untrusted schema, fixed proposal action/capability,
+  server-derived nonce, canonical intent digest, and transaction metadata
+  binding under the existing canonical-v2 hash.
+- Routed `FinGuardAgentClient.create_transaction()` through the boundary and
+  exposed `submit_intent()` for exact retries. Added tests for validation,
+  forged authority fields, mutation, replay, audit evidence, direct execution
+  rejection, and the existing approval/signing/simulator/checkpoint vertical
+  slice. Added M3.1 invariant and threat-boundary documentation.
+- Final validation: `tests/security/test_structured_intent.py` passed 43 tests;
+  the expanded intent, decision, AI, SDK-flow, local-AI, and checkpoint slice
+  passed 82 tests; full `pytest -q` passed all 282 tests. Ruff passed on all
+  changed Python files, and `git diff --check` passed. Existing SQLAlchemy
+  `datetime.utcnow()` deprecation warnings remain. Final tracked/untracked
+  review found only the intended M3.1 SDK/schema, boundary, focused tests, and
+  documentation changes; no M1/M2 production implementation files changed.
+- Retain the repository's preconfigured Git identity for the commit rather than
+  replacing it with the unverified address supplied in chat. GitHub square
+  attribution still depends on that configured email being verified on the
+  `hickytani` account.
+- Git is configured with the name `hickytani`. GitHub contribution squares
+  require the commit email to be associated with that account; do not change
+  the configured email without confirming the account's verified address.
+
 ## Session Start: 2026-10-02
 
 ### Step 1: Baseline Verification
