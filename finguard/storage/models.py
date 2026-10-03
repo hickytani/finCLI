@@ -117,6 +117,7 @@ class AuditEntryRecord(Base):
     __tablename__ = "audit_entries"
 
     entry_id = Column(Integer, primary_key=True, autoincrement=True)
+    seq = Column(Integer, nullable=False)
     timestamp = Column(DateTime, nullable=False)
     actor_id = Column(String, nullable=True)
     action = Column(String, nullable=False)
@@ -127,9 +128,26 @@ class AuditEntryRecord(Base):
     entry_hash = Column(String, nullable=False)
 
     __table_args__ = (
+        Index("ux_audit_entry_seq", "seq", unique=True),
         Index("ix_audit_timestamp", "timestamp"),
         Index("ix_audit_transaction", "transaction_id"),
     )
+
+
+class AuditCheckpointRecord(Base):
+    """Identity-signed commitment to a precise audit-ledger prefix."""
+    __tablename__ = "audit_checkpoints"
+
+    seq = Column(Integer, primary_key=True)
+    checkpoint_version = Column(Integer, nullable=False)
+    head_hash = Column(String, nullable=False)
+    previous_checkpoint_hash = Column(String, nullable=False)
+    checkpoint_hash = Column(String, nullable=False, unique=True)
+    created_at = Column(String, nullable=False)
+    signer_actor_id = Column(String, nullable=False)
+    key_id = Column(String, nullable=False)
+    algorithm = Column(String, nullable=False)
+    signature = Column(Text, nullable=False)
 
 
 class IncidentRecord(Base):

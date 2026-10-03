@@ -99,6 +99,9 @@ def init_db() -> None:
             "policy_hash": "VARCHAR",
             "transaction_version": "INTEGER NOT NULL DEFAULT 1",
         },
+        "audit_entries": {
+            "seq": "INTEGER",
+        },
         # Incident lifecycle additions
         "incidents": {
             "resolved_by": "VARCHAR",
@@ -131,6 +134,28 @@ def init_db() -> None:
                 connection.execute(text(stmt))
             except Exception:
                 pass  # Index may already exist under a different name — not fatal
+
+        audit_tables = set(inspect(connection).get_table_names())
+        if "audit_entries" in audit_tables:
+            unsequenced = connection.execute(
+                text("SELECT entry_id FROM audit_entries WHERE seq IS NULL ORDER BY entry_id")
+            ).scalars().all()
+            if unsequenced:
+                if "audit_checkpoints" in audit_tables and connection.execute(
+                    text("SELECT 1 FROM audit_checkpoints LIMIT 1")
+                ).first():
+                    raise RuntimeError("Cannot backfill audit sequences after checkpoints exist")
+                all_entry_ids = connection.execute(
+                    text("SELECT entry_id FROM audit_entries ORDER BY entry_id")
+                ).scalars().all()
+                for sequence, entry_id in enumerate(all_entry_ids, start=1):
+                    connection.execute(
+                        text("UPDATE audit_entries SET seq = :seq WHERE entry_id = :entry_id"),
+                        {"seq": sequence, "entry_id": entry_id},
+                    )
+            connection.execute(
+                text("CREATE UNIQUE INDEX IF NOT EXISTS ux_audit_entry_seq ON audit_entries (seq)")
+            )
 
 
 def reset_db() -> None:

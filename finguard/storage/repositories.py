@@ -330,14 +330,14 @@ class AuditRepository:
     def get_all_ordered(self) -> list[AuditEntryRecord]:
         return (
             self.session.query(AuditEntryRecord)
-            .order_by(AuditEntryRecord.entry_id.asc())
+            .order_by(AuditEntryRecord.seq.asc())
             .all()
         )
 
     def get_latest(self) -> Optional[AuditEntryRecord]:
         return (
             self.session.query(AuditEntryRecord)
-            .order_by(AuditEntryRecord.entry_id.desc())
+            .order_by(AuditEntryRecord.seq.desc())
             .first()
         )
 
@@ -347,7 +347,7 @@ class AuditRepository:
     def get_recent(self, limit: int = 20) -> list[AuditEntryRecord]:
         return (
             self.session.query(AuditEntryRecord)
-            .order_by(AuditEntryRecord.entry_id.desc())
+            .order_by(AuditEntryRecord.seq.desc())
             .limit(limit)
             .all()
         )
@@ -359,7 +359,7 @@ class AuditRepository:
         return (
             self.session.query(AuditEntryRecord)
             .filter(AuditEntryRecord.transaction_id == transaction_id)
-            .order_by(AuditEntryRecord.entry_id.asc())
+            .order_by(AuditEntryRecord.seq.asc())
             .limit(limit)
             .all()
         )
@@ -372,7 +372,7 @@ class AuditRepository:
         return (
             self.session.query(AuditEntryRecord)
             .filter(AuditEntryRecord.actor_id == actor_id)
-            .order_by(AuditEntryRecord.entry_id.desc())
+            .order_by(AuditEntryRecord.seq.desc())
             .limit(limit)
             .all()
         )
@@ -384,7 +384,7 @@ class AuditRepository:
         return (
             self.session.query(AuditEntryRecord)
             .filter(AuditEntryRecord.action == action)
-            .order_by(AuditEntryRecord.entry_id.desc())
+            .order_by(AuditEntryRecord.seq.desc())
             .limit(limit)
             .all()
         )

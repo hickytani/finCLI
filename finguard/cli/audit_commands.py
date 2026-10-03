@@ -2,8 +2,10 @@
 
 import json
 from pathlib import Path
+
 import typer
 from rich.console import Console
+from rich.prompt import Prompt
 from rich.table import Table
 
 from finguard.audit.ledger import AuditLedger
@@ -25,7 +27,7 @@ def do_audit_show(limit: int = 20):
             return
 
         table = Table(title="FIN//GUARD Tamper-Evident Audit Ledger", border_style="cyan")
-        table.add_column("# ID", style="bold white")
+        table.add_column("Sequence", style="bold white")
         table.add_column("Timestamp", style="dim")
         table.add_column("Actor", style="cyan")
         table.add_column("Action", style="white")
@@ -36,7 +38,7 @@ def do_audit_show(limit: int = 20):
         for e in reversed(entries):
             res_color = "green" if e.result == "PASS" else ("red" if e.result in ("BLOCKED", "FAIL") else "yellow")
             table.add_row(
-                str(e.entry_id),
+                str(e.seq),
                 e.timestamp.strftime("%H:%M:%S UTC"),
                 e.actor_id or "system",
                 e.action,
@@ -56,13 +58,33 @@ def do_audit_verify():
     is_valid, failing_id, reason = ledger.verify_integrity()
 
     if is_valid:
-        console.print(f"[bold green]AUDIT CHAIN INTEGRITY: PASS[/bold green]")
+        console.print("[bold green]AUDIT CHAIN INTEGRITY: PASS[/bold green]")
         console.print(f"[white]{reason}[/white]")
     else:
-        console.print(f"[bold red]AUDIT CHAIN BROKEN — TAMPERING DETECTED![/bold red]")
+        console.print("[bold red]AUDIT CHAIN BROKEN — TAMPERING DETECTED![/bold red]")
         console.print(f"Failing Entry ID: [yellow]#{failing_id}[/yellow]")
         console.print(f"Reason:           [red]{reason}[/red]")
         raise typer.Exit(code=1)
+
+
+def do_audit_checkpoint(
+    key_id: str,
+    signer_actor_id: str,
+    output: str | None = None,
+):
+    """Create an identity-bound checkpoint and optionally export its evidence."""
+    password = Prompt.ask(f"Enter passphrase for checkpoint key '{key_id}'", password=True)
+    checkpoint = AuditLedger().create_checkpoint(key_id, password, signer_actor_id)
+    if output:
+        Path(output).write_text(json.dumps(checkpoint, indent=2), encoding="utf-8")
+    console.print(
+        f"[bold green]Signed ledger checkpoint created[/bold green]\n"
+        f"Sequence:       [white]{checkpoint['seq']}[/white]\n"
+        f"Head hash:      [dim]{checkpoint['head_hash']}[/dim]\n"
+        f"Checkpoint hash:[dim] {checkpoint['checkpoint_hash']}[/dim]"
+    )
+    if output:
+        console.print(f"Evidence file:  [cyan]{Path(output).resolve()}[/cyan]")
 
 
 def do_audit_export(format: str = "json", output: str | None = None):
@@ -77,6 +99,7 @@ def do_audit_export(format: str = "json", output: str | None = None):
         data = [
             {
                 "entry_id": e.entry_id,
+                "seq": e.seq,
                 "timestamp": e.timestamp.isoformat(),
                 "actor_id": e.actor_id,
                 "action": e.action,

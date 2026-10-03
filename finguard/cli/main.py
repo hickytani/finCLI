@@ -584,10 +584,22 @@ def audit_show(
 
 @audit_app.command("verify")
 def audit_verify():
-    """Verify audit ledger hash chain integrity."""
+    """Verify audit sequence, hash chain, and signed checkpoints."""
     _ensure_init()
     from finguard.cli.audit_commands import do_audit_verify
     do_audit_verify()
+
+
+@audit_app.command("checkpoint")
+def audit_checkpoint(
+    key_id: str = typer.Option(..., "--key-id", help="Registered Ed25519 key ID."),
+    signer_actor_id: str = typer.Option(..., "--actor-id", help="Registered signer identity."),
+    output: str = typer.Option(None, "--output", "-o", help="Optional checkpoint evidence JSON path."),
+):
+    """Sign the current ledger head using an identity-bound key."""
+    _ensure_init()
+    from finguard.cli.audit_commands import do_audit_checkpoint
+    do_audit_checkpoint(key_id, signer_actor_id, output)
 
 
 @audit_app.command("export")

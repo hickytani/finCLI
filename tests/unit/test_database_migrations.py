@@ -61,6 +61,38 @@ def test_existing_rows_gain_minor_units_and_legacy_v1_version(tmp_path, monkeypa
         ).fetchone() == (1,)
 
 
+def test_existing_audit_entries_receive_contiguous_ledger_sequences(tmp_path, monkeypatch):
+    data_dir = tmp_path / "legacy-audit-data"
+    data_dir.mkdir()
+    database_path = data_dir / "finguard.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "CREATE TABLE audit_entries (entry_id INTEGER PRIMARY KEY, timestamp TEXT)"
+        )
+        connection.executemany(
+            "INSERT INTO audit_entries (entry_id, timestamp) VALUES (?, ?)",
+            [(4, "2026-01-01"), (9, "2026-01-02")],
+        )
+
+    monkeypatch.setenv("FINGUARD_DATA_DIR", str(data_dir))
+    reset_config()
+    reset_db()
+    monkeypatch.setattr(Base.metadata, "create_all", lambda engine: None)
+
+    init_db()
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT entry_id, seq FROM audit_entries ORDER BY entry_id"
+        ).fetchall() == [(4, 1), (9, 2)]
+        indexes = {
+            row[1]: row
+            for row in connection.execute("PRAGMA index_list(audit_entries)")
+        }
+        assert "ux_audit_entry_seq" in indexes
+        assert indexes["ux_audit_entry_seq"][2] == 1
+
+
 def _legacy_money_database(database_path):
     with sqlite3.connect(database_path) as connection:
         connection.execute(
