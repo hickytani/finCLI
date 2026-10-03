@@ -8,15 +8,15 @@ The database is NOT encrypted at rest in the MVP. Production deployments
 should use encrypted storage or full-disk encryption.
 """
 
+import sqlalchemy
 from sqlalchemy import create_engine, event, inspect, text
-from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from finguard.core.config import get_config
 
 
 class Base(DeclarativeBase):
     """SQLAlchemy declarative base for all ORM models."""
-    pass
 
 
 _engine = None
@@ -41,6 +41,7 @@ def get_engine():
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA busy_timeout=5000")
             cursor.close()
 
     return _engine
@@ -61,21 +62,108 @@ def get_session() -> Session:
 
 
 def init_db() -> None:
-    """Create all tables. Idempotent."""
+    """Create all tables. Idempotent.
+
+    Also applies safe column-level migrations for new fields added to existing
+    tables (SQLite does not support schema changes other than ADD COLUMN).
+    """
     from finguard.storage import models as _  # noqa: F401 — ensure models are imported
     engine = get_engine()
     Base.metadata.create_all(engine)
-    expected = {
-        "approvals": {"request_id": "VARCHAR", "policy_version": "VARCHAR", "policy_hash": "VARCHAR", "approval_type": "VARCHAR", "expires_at": "DATETIME", "signing_key_id": "VARCHAR", "approval_payload_hash": "VARCHAR"},
-        "approval_requests": {"policy_version": "VARCHAR", "policy_hash": "VARCHAR"},
+
+    # Column migrations: tables -> {column_name: DDL_type}
+    column_migrations = {
+        "transactions": {
+            "amount_minor": "BIGINT",
+            "canonical_version": "INTEGER NOT NULL DEFAULT 1",
+            "version": "INTEGER NOT NULL DEFAULT 1",
+            "signed_version": "INTEGER",
+            "failure_reason": "TEXT",
+        },
+        "decision_receipts": {
+            "canonical_version": "INTEGER NOT NULL DEFAULT 1",
+            "transaction_version": "INTEGER NOT NULL DEFAULT 1",
+        },
+        "approvals": {
+            "request_id": "VARCHAR",
+            "policy_version": "VARCHAR",
+            "policy_hash": "VARCHAR",
+            "approval_type": "VARCHAR",
+            "expires_at": "DATETIME",
+            "signing_key_id": "VARCHAR",
+            "approval_payload_hash": "VARCHAR",
+            "transaction_version": "INTEGER NOT NULL DEFAULT 1",
+        },
+        "approval_requests": {
+            "policy_version": "VARCHAR",
+            "policy_hash": "VARCHAR",
+            "transaction_version": "INTEGER NOT NULL DEFAULT 1",
+        },
+        "audit_entries": {
+            "seq": "INTEGER",
+        },
+        "simulator_accounts": {
+            "balance_minor": "BIGINT NOT NULL DEFAULT 0",
+            "active": "BOOLEAN NOT NULL DEFAULT 1",
+            "created_at": "DATETIME",
+        },
+        # Incident lifecycle additions
+        "incidents": {
+            "resolved_by": "VARCHAR",
+            "state_note": "TEXT",
+        },
     }
+
+    # Index migrations: CREATE INDEX IF NOT EXISTS is safe to repeat
+    index_migrations = [
+        "CREATE INDEX IF NOT EXISTS ix_incidents_actor ON incidents (actor_id)",
+        "CREATE INDEX IF NOT EXISTS ix_incidents_state ON incidents (state)",
+        "CREATE INDEX IF NOT EXISTS ix_incidents_transaction ON incidents (transaction_id)",
+        "CREATE INDEX IF NOT EXISTS ix_signals_transaction ON security_signals (transaction_id)",
+    ]
+
     inspector = inspect(engine)
     with engine.begin() as connection:
-        for table, columns in expected.items():
-            existing = {column["name"] for column in inspector.get_columns(table)}
+        existing_tables = set(inspect(connection).get_table_names())
+        for table, columns in column_migrations.items():
+            # Table may not exist yet on a brand-new db (create_all handles it)
+            if table not in existing_tables:
+                continue
+            existing = {col["name"] for col in inspector.get_columns(table)}
             for name, ddl_type in columns.items():
                 if name not in existing:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
+
+        for stmt in index_migrations:
+            table_name = stmt.split()[4].split("(")[0] if "ON" in stmt else None
+            if table_name and table_name not in existing_tables:
+                continue
+            try:
+                connection.execute(text(stmt))
+            except (RuntimeError, ValueError, sqlalchemy.exc.OperationalError):
+                pass  # Index may already exist under a different name — not fatal
+
+        audit_tables = set(inspect(connection).get_table_names())
+        if "audit_entries" in audit_tables:
+            unsequenced = connection.execute(
+                text("SELECT entry_id FROM audit_entries WHERE seq IS NULL ORDER BY entry_id")
+            ).scalars().all()
+            if unsequenced:
+                if "audit_checkpoints" in audit_tables and connection.execute(
+                    text("SELECT 1 FROM audit_checkpoints LIMIT 1")
+                ).first():
+                    raise RuntimeError("Cannot backfill audit sequences after checkpoints exist")
+                all_entry_ids = connection.execute(
+                    text("SELECT entry_id FROM audit_entries ORDER BY entry_id")
+                ).scalars().all()
+                for sequence, entry_id in enumerate(all_entry_ids, start=1):
+                    connection.execute(
+                        text("UPDATE audit_entries SET seq = :seq WHERE entry_id = :entry_id"),
+                        {"seq": sequence, "entry_id": entry_id},
+                    )
+            connection.execute(
+                text("CREATE UNIQUE INDEX IF NOT EXISTS ux_audit_entry_seq ON audit_entries (seq)")
+            )
 
 
 def reset_db() -> None:

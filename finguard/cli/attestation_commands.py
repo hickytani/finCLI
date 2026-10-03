@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -19,7 +20,7 @@ def do_attest_generate(output_path: str | None = None):
 
     report = ledger.generate_attestation(output_path=out_p)
 
-    console.print(f"[bold green]✓ Attestation Report Generated Successfully![/bold green]")
+    console.print("[bold green]✓ Attestation Report Generated Successfully![/bold green]")
     console.print(f"Saved to:          [cyan]{out_p.resolve()}[/cyan]")
     console.print(f"Chain Root Hash:   [dim]{report['chain_root_hash']}[/dim]")
     console.print(f"Entries Attested:  [white]{report['entry_count']}[/white]")
@@ -42,12 +43,12 @@ def do_attest_verify(report_path: str):
         valid_sig = AuditLedger.verify_attestation(report, trusted_pubkey_hex=trusted_key)
 
         if not valid_sig:
-            console.print(f"[bold red]✗ ATTESTATION VERIFICATION FAILED:[/bold red] Signature is INVALID or report tampered.")
+            console.print("[bold red]✗ ATTESTATION VERIFICATION FAILED:[/bold red] Signature is INVALID or report tampered.")
             raise typer.Exit(code=1)
 
         # Re-verify ledger live root hash against report root hash
         ledger = AuditLedger()
-        is_valid, failing_id, reason = ledger.verify_integrity()
+        is_valid, _failing_id, _reason = ledger.verify_integrity()
         live_entries = ledger._get_session()[0]
         try:
             from finguard.audit.ledger import AuditRepository
@@ -75,6 +76,6 @@ def do_attest_verify(report_path: str):
         if not report_matches_live:
             raise typer.Exit(code=1)
 
-    except Exception as e:
-        console.print(f"[bold red]Verification Error:[/bold red] {e}")
-        raise typer.Exit(code=1)
+    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+        console.print(f"[bold red]Verification Error:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc

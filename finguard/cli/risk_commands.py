@@ -1,12 +1,14 @@
 """CLI commands for risk analysis."""
 
 import json
+
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from finguard.core.transaction import Transaction
 from finguard.identity.registry import IdentityRegistry
+from finguard.money import Money
 from finguard.risk.engine import RiskEngine
 from finguard.storage.database import get_session
 from finguard.storage.repositories import TransactionRepository
@@ -35,7 +37,7 @@ def do_risk_analyze(transaction_id: str, output_json: bool = False):
             session_id=rec.session_id,
             from_account=rec.from_account,
             to_account=rec.to_account,
-            amount=rec.amount,
+            amount=Money(minor_units=rec.amount_minor, currency=rec.currency),
             currency=rec.currency,
             nonce=rec.nonce,
             timestamp=rec.timestamp

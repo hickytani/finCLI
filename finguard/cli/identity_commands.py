@@ -1,13 +1,14 @@
 """CLI commands for identity and authority management."""
 
-import json
 from pathlib import Path
+
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from finguard.core.enums import ActorType
-from finguard.identity.registry import IdentityRegistry, ActorConfig
+from finguard.core.enums import ActorType, Currency
+from finguard.identity.registry import ActorConfig, IdentityRegistry
+from finguard.money import Money
 
 console = Console()
 
@@ -35,7 +36,7 @@ def do_identity_list():
             a.actor_id,
             a.actor_type.value,
             a.display_name,
-            f"INR {a.authority_limit:,.2f}",
+            f"INR {Money.from_decimal(a.authority_limit, Currency.INR):,.2f}",
             dest_str,
             "Yes" if a.session_binding_required else "No"
         )
@@ -65,9 +66,10 @@ def do_identity_register(
     actor_id: str,
     actor_type: str,
     display_name: str,
-    limit: float,
+    limit: str,
     destinations: str,
-    root_key: str
+    root_key: str,
+    public_key: str | None = None,
 ):
     """Register a new actor in identity registry (requires root key)."""
     registry = IdentityRegistry()
@@ -82,7 +84,8 @@ def do_identity_register(
         authority_limit=limit,
         allowed_destinations=dest_list,
         active=True,
-        session_binding_required=(actor_type.lower() == "agent")
+        session_binding_required=(actor_type.lower() == "agent"),
+        public_key=public_key,
     )
 
     registry.register_actor(actor_config, root_key_path)

@@ -12,17 +12,14 @@ transaction MUST NOT proceed to signing.
 
 class FinguardError(Exception):
     """Base exception for all FIN//GUARD errors."""
-    pass
 
 
 class SecurityError(FinguardError):
     """Base for security-specific failures. Always fail closed."""
-    pass
 
 
 class AuthorityDeniedError(SecurityError):
     """Actor does not have authority for the requested operation."""
-    pass
 
 
 class PolicyViolationError(SecurityError):
@@ -37,27 +34,22 @@ class PolicyViolationError(SecurityError):
 
 class IntegrityError(SecurityError):
     """Cryptographic integrity check failed (tampering detected)."""
-    pass
 
 
 class ReplayError(SecurityError):
     """Duplicate nonce / idempotency key detected (replay attack)."""
-    pass
 
 
 class QuorumError(SecurityError):
     """Insufficient approval quorum for the requested operation."""
-    pass
 
 
 class KeystoreError(SecurityError):
     """Keystore operation failed (wrong password, corrupt key, etc.)."""
-    pass
 
 
 class ApprovalError(SecurityError):
     """Approval workflow violation (self-approval, duplicate, expired, etc.)."""
-    pass
 
 
 class AuditIntegrityError(SecurityError):
@@ -75,9 +67,49 @@ class AuditIntegrityError(SecurityError):
 
 class ConfigurationError(FinguardError):
     """Invalid configuration or policy file."""
-    pass
 
 
 class TransactionError(FinguardError):
     """Transaction processing error (not necessarily security-related)."""
-    pass
+
+
+class ValidationError(FinguardError):
+    """Boundary validation error for hostile or malformed inputs."""
+
+
+class MoneyError(ValidationError, ValueError):
+    """Invalid monetary value, excess precision, or forbidden float contamination."""
+
+
+class UnsupportedCurrencyError(MoneyError):
+    """Currency is not explicitly supported by the domain."""
+
+
+class ExcessPrecisionError(MoneyError):
+    """Amount has more fractional digits than its currency permits."""
+
+
+class CanonicalizationError(SecurityError):
+    """Canonical serialization or domain separation failure."""
+
+
+__all__ = [
+    "ApprovalError",
+    "AuditIntegrityError",
+    "AuthorityDeniedError",
+    "CanonicalizationError",
+    "ConfigurationError",
+    "ExcessPrecisionError",
+    "FinguardError",
+    "IntegrityError",
+    "KeystoreError",
+    "MoneyError",
+    "PolicyViolationError",
+    "QuorumError",
+    "ReplayError",
+    "SecurityError",
+    "TransactionError",
+    "UnsupportedCurrencyError",
+    "ValidationError",
+]
+

@@ -5,6 +5,7 @@ A new destination generates a security signal for risk evaluation.
 """
 
 from sqlalchemy.orm import Session
+
 from finguard.storage.models import TransactionRecord
 
 

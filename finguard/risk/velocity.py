@@ -5,7 +5,9 @@ to detect velocity spikes and potential abuse.
 """
 
 import datetime
+
 from sqlalchemy.orm import Session
+
 from finguard.storage.repositories import TransactionRepository
 
 
@@ -26,7 +28,7 @@ class VelocityTracker:
         Returns:
             Tuple of (count, cumulative_amount).
         """
-        now = current_time or datetime.datetime.now(datetime.timezone.utc)
+        now = current_time or datetime.datetime.now(datetime.UTC)
         if now.tzinfo is not None:
             # Strip timezone for SQLite comparison if naive datetime is used in DB
             now = now.replace(tzinfo=None)

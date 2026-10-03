@@ -1,34 +1,45 @@
 """CLI commands for transaction creation, inspection, signing, and verification."""
 
 import json
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.prompt import Prompt
+from rich.table import Table
 
 from finguard.approvals.service import ApprovalService
 from finguard.audit.ledger import AuditLedger
 from finguard.audit.nonce_store import NonceStore
-from finguard.core.enums import Currency, TransactionState, DecisionType, IncidentSeverity
+from finguard.core.canonical import canonical_amount, canonical_serialize
+from finguard.core.enums import Currency, DecisionType, IncidentSeverity, TransactionState
+from finguard.core.errors import SecurityError
 from finguard.core.transaction import Transaction
+from finguard.crypto.hashing import sha256_hash
 from finguard.crypto.keystore import Keystore
 from finguard.crypto.signing import sign_canonical_bytes, verify_signature
 from finguard.identity.registry import IdentityRegistry
 from finguard.incidents.service import IncidentService
+from finguard.money import Money
 from finguard.policy.engine import PolicyEngine
 from finguard.risk.engine import RiskEngine
 from finguard.storage.database import get_session
-from finguard.storage.models import TransactionRecord, ActorRecord
-from finguard.storage.repositories import TransactionRepository, ActorRepository
+from finguard.storage.models import ActorRecord, TransactionRecord
+from finguard.storage.repositories import ActorRepository, TransactionRepository
 
 console = Console()
+
+
+def _record_money(record: TransactionRecord) -> Money:
+    if record.amount_minor is None:
+        raise SecurityError("Legacy transaction is read-only and must be resubmitted")
+    return Money(minor_units=record.amount_minor, currency=record.currency)
 
 
 def do_tx_create(
     from_account: str,
     to_account: str,
-    amount: float,
+    amount: str,
     currency: str = "INR",
     actor_id: str | None = None,
     metadata_json: str | None = None
@@ -181,7 +192,7 @@ def do_tx_create(
         f"Transaction ID: [bold cyan]{tx.transaction_id}[/bold cyan]\n"
         f"Actor:          [white]{tx.actor_id}[/white]\n"
         f"Transfer:       [white]{tx.from_account}[/white] ➔ [white]{tx.to_account}[/white]\n"
-        f"Amount:         [bold yellow]{tx.currency.value} {tx.amount:,.2f}[/bold yellow]\n"
+        f"Amount:         [bold yellow]{tx.currency.value} {tx.money.to_decimal_string()}[/bold yellow]\n"
         f"State:          [{color}]{tx.state.value.upper()}[/{color}]\n"
         f"Policy Trace:   [dim]{pol_res.explanation}[/dim]\n"
         f"Canonical Hash: [dim]{tx.transaction_hash()}[/dim]",
@@ -206,7 +217,9 @@ def do_tx_inspect(transaction_id: str, output_json: bool = False):
             "session_id": rec.session_id,
             "from_account": rec.from_account,
             "to_account": rec.to_account,
-            "amount": rec.amount,
+            "amount": _record_money(rec).to_decimal_string() if rec.amount_minor is not None else str(rec.amount),
+            "amount_minor": rec.amount_minor,
+            "canonical_version": rec.canonical_version,
             "currency": rec.currency,
             "nonce": rec.nonce,
             "timestamp": rec.timestamp.isoformat(),
@@ -249,9 +262,9 @@ def do_tx_sign(transaction_id: str, key_id: str | None = None):
         console.print(f"[bold green]✓ Transaction '{transaction_id}' successfully signed by the final signing gate.[/bold green]")
         console.print(f"Signature: [dim]{signature}[/dim]")
         return signature
-    except Exception as e:
-        console.print(f"[bold red]SIGNING BLOCKED:[/bold red] {e}")
-        raise typer.Exit(code=1)
+    except (RuntimeError, ValueError, TypeError) as exc:
+        console.print(f"[bold red]SIGNING BLOCKED:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
 
     session = get_session()
     try:
@@ -275,7 +288,7 @@ def do_tx_sign(transaction_id: str, key_id: str | None = None):
             session_id=rec.session_id,
             from_account=rec.from_account,
             to_account=rec.to_account,
-            amount=rec.amount,
+            amount=_record_money(rec),
             currency=Currency(rec.currency),
             nonce=rec.nonce,
             timestamp=rec.timestamp,
@@ -338,9 +351,9 @@ def do_tx_sign(transaction_id: str, key_id: str | None = None):
             console.print(f"Signing Key ID: [cyan]{key_id}[/cyan]")
             console.print(f"Signature:      [dim]{signature}[/dim]")
 
-        except Exception as e:
-            console.print(f"[bold red]Signing Error:[/bold red] {e}")
-            raise typer.Exit(code=1)
+        except (RuntimeError, ValueError, TypeError) as exc:
+            console.print(f"[bold red]Signing Error:[/bold red] {exc}")
+            raise typer.Exit(code=1) from exc
 
     finally:
         session.close()
@@ -360,16 +373,49 @@ def do_tx_verify(transaction_id: str):
             console.print(f"[bold red]Error:[/bold red] Transaction '{transaction_id}' has not been signed yet.")
             raise typer.Exit(code=1)
 
+        canonical_version = rec.canonical_version
+        if canonical_version == 1:
+            if rec.amount is None:
+                raise SecurityError("Legacy transaction amount is unavailable for verification")
+            fields = {
+                "transaction_id": rec.transaction_id,
+                "actor_id": rec.actor_id,
+                "session_id": rec.session_id or "",
+                "from_account": rec.from_account,
+                "to_account": rec.to_account,
+                "amount": canonical_amount(str(rec.amount)),
+                "currency": rec.currency,
+                "nonce": rec.nonce,
+                "timestamp": rec.timestamp,
+                "idempotency_key": rec.idempotency_key or "",
+                "policy_version": rec.policy_version or "",
+            }
+            canonical_bytes = canonical_serialize(fields, version=1)
+            transaction_hash = sha256_hash(canonical_bytes)
+            if rec.canonical_hash and transaction_hash != rec.canonical_hash:
+                raise SecurityError("Legacy transaction hash does not match stored record")
+            keystore = Keystore()
+            pub_bytes = bytes.fromhex(keystore.get_public_key(rec.signing_key_id))
+            verify_signature(canonical_bytes, rec.signature, pub_bytes)
+            console.print("[bold green]✓ LEGACY V1 SIGNATURE VALID (READ ONLY)[/bold green]")
+            console.print(f"Transaction ID: [cyan]{transaction_id}[/cyan]")
+            console.print(f"Canonical Hash: [dim]{transaction_hash}[/dim]")
+            return
+        else:
+            amount = _record_money(rec)
         tx = Transaction(
             transaction_id=rec.transaction_id,
             actor_id=rec.actor_id,
             session_id=rec.session_id,
             from_account=rec.from_account,
             to_account=rec.to_account,
-            amount=rec.amount,
+            amount=amount,
             currency=Currency(rec.currency),
             nonce=rec.nonce,
             timestamp=rec.timestamp,
+            metadata=json.loads(rec.metadata_json) if rec.metadata_json else None,
+            idempotency_key=rec.idempotency_key,
+            policy_version=rec.policy_version,
             state=TransactionState(rec.state)
         )
 
@@ -379,14 +425,14 @@ def do_tx_verify(transaction_id: str):
             pub_bytes = bytes.fromhex(pub_hex)
             verify_signature(tx.canonical_bytes(), rec.signature, pub_bytes)
 
-            console.print(f"[bold green]✓ SIGNATURE VALID[/bold green]")
+            console.print("[bold green]✓ SIGNATURE VALID[/bold green]")
+
             console.print(f"Transaction ID: [cyan]{transaction_id}[/cyan]")
             console.print(f"Signing Key:    [cyan]{rec.signing_key_id}[/cyan]")
             console.print(f"Canonical Hash: [dim]{tx.transaction_hash()}[/dim]")
-        except Exception as e:
-            console.print(f"[bold red]✗ SIGNATURE INVALID / INTEGRITY FAILURE:[/bold red] {e}")
-            raise typer.Exit(code=1)
-
+        except (RuntimeError, ValueError, TypeError) as exc:
+            console.print(f"[bold red]✗ SIGNATURE INVALID / INTEGRITY FAILURE:[/bold red] {exc}")
+            raise typer.Exit(code=1) from exc
     finally:
         session.close()
 
@@ -419,7 +465,7 @@ def do_tx_list(state: str | None = None, limit: int = 20):
                 r.transaction_id,
                 r.actor_id,
                 f"{r.from_account} ➔ {r.to_account}",
-                f"{r.currency} {r.amount:,.2f}",
+                f"{r.currency} {(_record_money(r).to_decimal_string() if r.amount_minor is not None else str(r.amount))}",
                 f"[{state_color}]{r.state.upper()}[/{state_color}]",
                 "✓" if r.signature else "✗"
             )

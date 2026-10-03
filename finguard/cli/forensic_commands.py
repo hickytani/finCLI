@@ -1,20 +1,21 @@
 """CLI commands for deep forensic transaction investigation."""
 
 import json
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
 from finguard.approvals.service import ApprovalService
 from finguard.audit.nonce_store import NonceStore
 from finguard.core.transaction import Transaction
 from finguard.identity.registry import IdentityRegistry
 from finguard.incidents.service import IncidentService
+from finguard.money import Money
 from finguard.policy.engine import PolicyEngine
 from finguard.risk.engine import RiskEngine
 from finguard.storage.database import get_session
-from finguard.storage.repositories import TransactionRepository, AuditRepository
+from finguard.storage.repositories import AuditRepository, TransactionRepository
 
 console = Console()
 
@@ -38,7 +39,7 @@ def do_investigate(transaction_id: str, output_json: bool = False):
             session_id=rec.session_id,
             from_account=rec.from_account,
             to_account=rec.to_account,
-            amount=rec.amount,
+            amount=Money(minor_units=rec.amount_minor, currency=rec.currency),
             currency=rec.currency,
             nonce=rec.nonce,
             timestamp=rec.timestamp
@@ -73,7 +74,8 @@ def do_investigate(transaction_id: str, output_json: bool = False):
             "actor_id": rec.actor_id,
             "actor_type": actor.actor_type.value if actor else "unknown",
             "authority_limit": actor.authority_limit if actor else None,
-            "amount": rec.amount,
+            "amount": Money(minor_units=rec.amount_minor, currency=rec.currency).to_decimal_string(),
+            "amount_minor": rec.amount_minor,
             "currency": rec.currency,
             "nonce": rec.nonce,
             "nonce_registered": nonce_used,
@@ -99,7 +101,7 @@ def do_investigate(transaction_id: str, output_json: bool = False):
             f"Transaction ID:    [bold cyan]{rec.transaction_id}[/bold cyan]\n"
             f"Actor:             [white]{rec.actor_id}[/white] (Type: [cyan]{data['actor_type']}[/cyan])\n"
             f"Transfer:          [white]{rec.from_account}[/white] ➔ [white]{rec.to_account}[/white]\n"
-            f"Amount & Currency: [bold yellow]{rec.currency} {rec.amount:,.2f}[/bold yellow]\n"
+            f"Amount & Currency: [bold yellow]{rec.currency} {data['amount']}[/bold yellow]\n"
             f"State:             [bold]{rec.state.upper()}[/bold]\n"
             f"Canonical Hash:    [dim]{rec.canonical_hash}[/dim]\n"
             f"Nonce Store:       {'Registered ✓' if nonce_used else 'Unregistered ✗'}\n"

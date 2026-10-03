@@ -6,6 +6,7 @@ independent of authentication credentials.
 
 from pydantic import BaseModel, Field
 
+from finguard.core.enums import ActorType
 from finguard.core.identity import Actor
 from finguard.core.transaction import Transaction
 
@@ -15,6 +16,7 @@ class AuthorityDecision(BaseModel):
 
     allowed: bool
     reasons: list[str] = Field(default_factory=list)
+    signals: list[str] = Field(default_factory=list)
     actor_id: str
     transaction_id: str
 
@@ -31,6 +33,7 @@ def evaluate_authority(actor: Actor, transaction: Transaction, action: str = "tx
         AuthorityDecision with allowed flag and explicit decision reasons.
     """
     reasons = []
+    signals = []
 
     if not actor.active:
         return AuthorityDecision(
@@ -43,30 +46,58 @@ def evaluate_authority(actor: Actor, transaction: Transaction, action: str = "tx
     auth = actor.authority
 
     # 1. Action permission check
-    if action and auth.allowed_actions:
-        if action not in auth.allowed_actions and "*" not in auth.allowed_actions:
-            reasons.append(f"Actor lacks permission for action '{action}'")
+    action_wildcard = "*" in auth.allowed_actions
+    explicit_actions = [allowed for allowed in auth.allowed_actions if allowed != "*"]
+    if not auth.allowed_actions:
+        reasons.append("Actor has empty allowed_actions list (deny-by-default)")
+    elif action and action not in explicit_actions:
+        if action_wildcard and actor.actor_type != ActorType.AGENT:
+            signals.append("WILDCARD_AUTHORITY_USED")
+        elif action_wildcard and actor.actor_type == ActorType.AGENT:
+            reasons.append("Agent wildcard action authority is forbidden")
+        else:
+            reasons.append(f"Actor lacks explicit permission for action '{action}'")
+
+    source_wildcard = "*" in auth.allowed_source_accounts
+    explicit_sources = [account for account in auth.allowed_source_accounts if account != "*"]
+    if not auth.allowed_source_accounts:
+        reasons.append("Actor has empty allowed_source_accounts list (deny-by-default)")
+    elif transaction.from_account not in explicit_sources:
+        if source_wildcard and actor.actor_type != ActorType.AGENT:
+            signals.append("WILDCARD_AUTHORITY_USED")
+        elif source_wildcard and actor.actor_type == ActorType.AGENT:
+            reasons.append("Agent wildcard source authority is forbidden")
+        else:
+            reasons.append(f"Source '{transaction.from_account}' is not explicitly authorized")
 
     # 2. Maximum transaction amount check
-    if transaction.amount > auth.max_transaction_amount:
+    if transaction.currency != auth.currency:
+        reasons.append("Transaction currency does not match authority currency")
+    elif transaction.amount_minor > auth.max_transaction_amount_minor:
         reasons.append(
-            f"Transaction amount ({transaction.currency.value} {transaction.amount:,.2f}) "
+            f"Transaction amount ({transaction.currency.value} {transaction.money.to_decimal_string()}) "
             f"exceeds actor maximum limit ({auth.currency.value} {auth.max_transaction_amount:,.2f})"
         )
 
-    # 3. Allowed destinations check
-    if auth.allowed_destinations:
-        if transaction.to_account not in auth.allowed_destinations and "*" not in auth.allowed_destinations:
-            reasons.append(
-                f"Destination '{transaction.to_account}' is not in actor allowed destinations list "
-                f"({', '.join(auth.allowed_destinations)})"
-            )
+    # 3. Allowed destinations check (deny-by-default)
+    destination_wildcard = "*" in auth.allowed_destinations
+    explicit_destinations = [account for account in auth.allowed_destinations if account != "*"]
+    if not auth.allowed_destinations:
+        reasons.append("Actor has empty allowed_destinations list (deny-by-default)")
+    elif transaction.to_account not in explicit_destinations:
+        if destination_wildcard and actor.actor_type != ActorType.AGENT:
+            signals.append("WILDCARD_AUTHORITY_USED")
+        elif destination_wildcard and actor.actor_type == ActorType.AGENT:
+            reasons.append("Agent wildcard destination authority is forbidden")
+        else:
+            reasons.append(f"Destination '{transaction.to_account}' is not explicitly authorized")
 
     is_allowed = len(reasons) == 0
 
     return AuthorityDecision(
         allowed=is_allowed,
         reasons=reasons if not is_allowed else ["Authority checks passed"],
+        signals=sorted(set(signals)),
         actor_id=actor.actor_id,
         transaction_id=transaction.transaction_id,
     )

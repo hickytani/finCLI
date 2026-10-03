@@ -61,9 +61,9 @@ def do_attack_run(scenario_name: str):
             step_color = "green" if step.passed else "red"
             console.print(f"  [{step_color}]✓[/{step_color}] Step {step.step_index} [{step.action}]: {step.details}")
 
-    except Exception as e:
-        console.print(f"[bold red]Error executing attack scenario:[/bold red] {e}")
-        raise typer.Exit(code=1)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        console.print(f"[bold red]Error executing attack scenario:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
 
 
 def do_attack_suite():
@@ -92,8 +92,8 @@ def do_attack_suite():
 
             details = res.step_results[-1].details if res.step_results else "No details"
             table.add_row(s, outcome, res.incident_id or "N/A", details[:60])
-        except Exception as e:
-            table.add_row(s, "[bold red]ERROR[/bold red]", "N/A", str(e))
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            table.add_row(s, "[bold red]ERROR[/bold red]", "N/A", str(exc))
 
     console.print(table)
     console.print(f"\n[bold green]Suite Completed:[/bold green] {passed_count}/{len(scenarios)} attack vectors successfully defended.")

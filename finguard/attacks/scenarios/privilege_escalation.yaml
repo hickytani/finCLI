@@ -5,7 +5,7 @@ steps:
   - action: create_transaction
     from_account: treasury
     to_account: vendor-a
-    amount: 100000.0
+    amount: "100000.00"
     currency: INR
     expect: BLOCKED
     expect_reason_contains: "authority limit"

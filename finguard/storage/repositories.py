@@ -7,17 +7,59 @@ SECURITY NOTE: Never log or return raw query exceptions to callers.
 Wrap database errors to prevent information leakage.
 """
 
-import json
 import datetime
-from typing import Optional
+import re
+from decimal import Decimal, InvalidOperation
 
+from sqlalchemy import and_, func, or_, update
 from sqlalchemy.orm import Session
 
+from finguard.core.enums import Currency, TransactionState
+from finguard.core.errors import MoneyError
+from finguard.money import get_currency_exponent
 from finguard.storage.models import (
-    ActorRecord, TransactionRecord, ApprovalRecord, ApprovalRequestRecord,
-    AuditEntryRecord, IncidentRecord, SecuritySignalRecord,
-    DecisionReceiptRecord, KeyRecord, NonceRecord,
+    ActorRecord,
+    ApprovalRecord,
+    ApprovalRequestRecord,
+    AuditEntryRecord,
+    DecisionReceiptRecord,
+    IncidentRecord,
+    KeyRecord,
+    NonceRecord,
+    SecuritySignalRecord,
+    TransactionRecord,
 )
+
+# Maximum rows any single investigation query may return without explicit override.
+_INVESTIGATION_DEFAULT_LIMIT = 100
+_INVESTIGATION_MAX_LIMIT = 500
+_AMOUNT_FILTER_PATTERN = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z", re.ASCII)
+
+
+def _minor_amount_filter(value: str | int, *, lower: bool):
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise MoneyError("Amount filters require a decimal string or integer")
+    value_text = str(value)
+    if not _AMOUNT_FILTER_PATTERN.fullmatch(value_text):
+        raise MoneyError("Invalid decimal amount filter")
+    try:
+        decimal_value = Decimal(value_text)
+    except InvalidOperation as exc:
+        raise MoneyError("Invalid decimal amount filter") from exc
+    clauses = []
+    for currency in Currency:
+        exponent = get_currency_exponent(currency)
+        minor_value = decimal_value * (10 ** exponent)
+        if minor_value != minor_value.to_integral_value():
+            continue
+        comparison = (
+            TransactionRecord.amount_minor >= int(minor_value)
+            if lower else TransactionRecord.amount_minor <= int(minor_value)
+        )
+        clauses.append(and_(TransactionRecord.currency == currency.value, comparison))
+    if not clauses:
+        raise MoneyError("Amount filter has excess precision for supported currencies")
+    return or_(*clauses)
 
 
 class TransactionRepository:
@@ -26,11 +68,59 @@ class TransactionRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def save(self, record: TransactionRecord) -> None:
-        self.session.merge(record)
-        self.session.commit()
+    def get_by_idempotency_key(self, idempotency_key: str) -> TransactionRecord | None:
+        if not idempotency_key:
+            return None
+        return (
+            self.session.query(TransactionRecord)
+            .filter(TransactionRecord.idempotency_key == idempotency_key)
+            .one_or_none()
+        )
 
-    def get(self, transaction_id: str) -> Optional[TransactionRecord]:
+    def _assert_unique_idempotency_key(self, idempotency_key: str, transaction_id: str, body_hash: str | None = None) -> None:
+        """Reject idempotency-key reuse unless it is the identical request replay."""
+        existing = self.get_by_idempotency_key(idempotency_key)
+        if existing is None:
+            return
+        if existing.transaction_id == transaction_id and (body_hash is None or existing.canonical_hash == body_hash):
+            return
+        raise ValueError(f"reused idempotency key '{idempotency_key}' with a different request payload")
+
+    def compare_and_swap_state(
+        self,
+        transaction_id: str,
+        *,
+        expected_version: int,
+        new_state: str | TransactionState,
+        values: dict | None = None,
+        commit: bool = True,
+    ) -> bool:
+        """Row-level CAS update: only one worker can win on the expected version."""
+        normalized_state = TransactionState(new_state).value if isinstance(new_state, TransactionState) else str(new_state)
+        update_values = dict(values or {})
+        update_values.update({
+            "state": normalized_state,
+            "version": expected_version + 1,
+        })
+        result = self.session.execute(
+            update(TransactionRecord)
+            .where(TransactionRecord.transaction_id == transaction_id)
+            .where(TransactionRecord.version == expected_version)
+            .values(**update_values)
+        )
+        if commit:
+            if result.rowcount == 1:
+                self.session.commit()
+            else:
+                self.session.rollback()
+        return result.rowcount == 1
+
+    def save(self, record: TransactionRecord, *, commit: bool = True) -> None:
+        self.session.merge(record)
+        if commit:
+            self.session.commit()
+
+    def get(self, transaction_id: str) -> TransactionRecord | None:
         return self.session.get(TransactionRecord, transaction_id)
 
     def list_all(self, limit: int = 50) -> list[TransactionRecord]:
@@ -69,17 +159,90 @@ class TransactionRepository:
             .count()
         )
 
-    def sum_in_window(self, actor_id: str, since: datetime.datetime) -> float:
-        from sqlalchemy import func
+    def sum_in_window(self, actor_id: str, since: datetime.datetime) -> int:
         result = (
-            self.session.query(func.coalesce(func.sum(TransactionRecord.amount), 0))
+            self.session.query(func.coalesce(func.sum(TransactionRecord.amount_minor), 0))
             .filter(
                 TransactionRecord.actor_id == actor_id,
                 TransactionRecord.timestamp >= since,
             )
             .scalar()
         )
-        return float(result)
+        return int(result)
+
+    def search(
+        self,
+        actor_id: str | None = None,
+        state: str | None = None,
+        to_account: str | None = None,
+        from_account: str | None = None,
+        since: datetime.datetime | None = None,
+        until: datetime.datetime | None = None,
+        min_amount: str | int | None = None,
+        max_amount: str | int | None = None,
+        offset: int = 0,
+        limit: int = _INVESTIGATION_DEFAULT_LIMIT,
+    ) -> list[TransactionRecord]:
+        """Multi-filter paginated transaction search.
+
+        All filters are additive (AND). Limit is capped at the module maximum
+        to prevent unbounded DB scans. offset/limit provide backend pagination.
+        """
+        limit = min(limit, _INVESTIGATION_MAX_LIMIT)
+        q = self.session.query(TransactionRecord)
+        if actor_id:
+            q = q.filter(TransactionRecord.actor_id == actor_id)
+        if state:
+            q = q.filter(TransactionRecord.state == state)
+        if to_account:
+            q = q.filter(TransactionRecord.to_account == to_account)
+        if from_account:
+            q = q.filter(TransactionRecord.from_account == from_account)
+        if since:
+            q = q.filter(TransactionRecord.timestamp >= since)
+        if until:
+            q = q.filter(TransactionRecord.timestamp <= until)
+        if min_amount is not None:
+            q = q.filter(_minor_amount_filter(min_amount, lower=True))
+        if max_amount is not None:
+            q = q.filter(_minor_amount_filter(max_amount, lower=False))
+        return (
+            q.order_by(TransactionRecord.timestamp.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+    def count_search(
+        self,
+        actor_id: str | None = None,
+        state: str | None = None,
+        to_account: str | None = None,
+        from_account: str | None = None,
+        since: datetime.datetime | None = None,
+        until: datetime.datetime | None = None,
+        min_amount: str | int | None = None,
+        max_amount: str | int | None = None,
+    ) -> int:
+        """Count total matching rows for search — used to compute pagination metadata."""
+        q = self.session.query(TransactionRecord)
+        if actor_id:
+            q = q.filter(TransactionRecord.actor_id == actor_id)
+        if state:
+            q = q.filter(TransactionRecord.state == state)
+        if to_account:
+            q = q.filter(TransactionRecord.to_account == to_account)
+        if from_account:
+            q = q.filter(TransactionRecord.from_account == from_account)
+        if since:
+            q = q.filter(TransactionRecord.timestamp >= since)
+        if until:
+            q = q.filter(TransactionRecord.timestamp <= until)
+        if min_amount is not None:
+            q = q.filter(_minor_amount_filter(min_amount, lower=True))
+        if max_amount is not None:
+            q = q.filter(_minor_amount_filter(max_amount, lower=False))
+        return q.count()
 
 
 class ActorRepository:
@@ -92,7 +255,7 @@ class ActorRepository:
         self.session.merge(record)
         self.session.commit()
 
-    def get(self, actor_id: str) -> Optional[ActorRecord]:
+    def get(self, actor_id: str) -> ActorRecord | None:
         return self.session.get(ActorRecord, actor_id)
 
     def list_all(self) -> list[ActorRecord]:
@@ -128,7 +291,7 @@ class ApprovalRepository:
         self.session.merge(record)
         self.session.commit()
 
-    def get_request(self, transaction_id: str) -> Optional[ApprovalRequestRecord]:
+    def get_request(self, transaction_id: str) -> ApprovalRequestRecord | None:
         return (
             self.session.query(ApprovalRequestRecord)
             .filter(ApprovalRequestRecord.transaction_id == transaction_id)
@@ -157,21 +320,23 @@ class AuditRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def append(self, record: AuditEntryRecord) -> None:
+    def append(self, record: AuditEntryRecord, *, commit: bool = True) -> None:
         self.session.add(record)
-        self.session.commit()
+        self.session.flush()
+        if commit:
+            self.session.commit()
 
     def get_all_ordered(self) -> list[AuditEntryRecord]:
         return (
             self.session.query(AuditEntryRecord)
-            .order_by(AuditEntryRecord.entry_id.asc())
+            .order_by(AuditEntryRecord.seq.asc())
             .all()
         )
 
-    def get_latest(self) -> Optional[AuditEntryRecord]:
+    def get_latest(self) -> AuditEntryRecord | None:
         return (
             self.session.query(AuditEntryRecord)
-            .order_by(AuditEntryRecord.entry_id.desc())
+            .order_by(AuditEntryRecord.seq.desc())
             .first()
         )
 
@@ -181,7 +346,64 @@ class AuditRepository:
     def get_recent(self, limit: int = 20) -> list[AuditEntryRecord]:
         return (
             self.session.query(AuditEntryRecord)
-            .order_by(AuditEntryRecord.entry_id.desc())
+            .order_by(AuditEntryRecord.seq.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def get_by_transaction(
+        self, transaction_id: str, limit: int = _INVESTIGATION_DEFAULT_LIMIT
+    ) -> list[AuditEntryRecord]:
+        """Return audit entries related to a specific transaction, bounded."""
+        return (
+            self.session.query(AuditEntryRecord)
+            .filter(AuditEntryRecord.transaction_id == transaction_id)
+            .order_by(AuditEntryRecord.seq.asc())
+            .limit(limit)
+            .all()
+        )
+
+    def get_by_actor(
+        self, actor_id: str, limit: int = _INVESTIGATION_DEFAULT_LIMIT
+    ) -> list[AuditEntryRecord]:
+        """Return recent audit entries for a specific actor, bounded."""
+        limit = min(limit, _INVESTIGATION_MAX_LIMIT)
+        return (
+            self.session.query(AuditEntryRecord)
+            .filter(AuditEntryRecord.actor_id == actor_id)
+            .order_by(AuditEntryRecord.seq.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def get_by_action(
+        self, action: str, limit: int = _INVESTIGATION_DEFAULT_LIMIT
+    ) -> list[AuditEntryRecord]:
+        """Return audit entries of a specific action type, bounded."""
+        return (
+            self.session.query(AuditEntryRecord)
+            .filter(AuditEntryRecord.action == action)
+            .order_by(AuditEntryRecord.seq.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def get_by_transaction_ids(
+        self,
+        transaction_ids: list[str],
+        limit: int = _INVESTIGATION_DEFAULT_LIMIT,
+    ) -> list[AuditEntryRecord]:
+        """Batch fetch audit entries for a set of transaction IDs.
+
+        Uses an IN query rather than N individual queries. Bounded by limit.
+        """
+        if not transaction_ids:
+            return []
+        limit = min(limit, _INVESTIGATION_MAX_LIMIT)
+        return (
+            self.session.query(AuditEntryRecord)
+            .filter(AuditEntryRecord.transaction_id.in_(transaction_ids))
+            .order_by(AuditEntryRecord.entry_id.asc())
             .limit(limit)
             .all()
         )
@@ -197,7 +419,7 @@ class IncidentRepository:
         self.session.merge(record)
         self.session.commit()
 
-    def get(self, incident_id: str) -> Optional[IncidentRecord]:
+    def get(self, incident_id: str) -> IncidentRecord | None:
         return self.session.get(IncidentRecord, incident_id)
 
     def list_all(self, limit: int = 50) -> list[IncidentRecord]:
@@ -214,6 +436,59 @@ class IncidentRepository:
             .filter(IncidentRecord.transaction_id == transaction_id)
             .all()
         )
+
+    def list_by_actor(
+        self, actor_id: str, limit: int = _INVESTIGATION_DEFAULT_LIMIT
+    ) -> list[IncidentRecord]:
+        """Return incidents involving a specific actor, most recent first, bounded."""
+        limit = min(limit, _INVESTIGATION_MAX_LIMIT)
+        return (
+            self.session.query(IncidentRecord)
+            .filter(IncidentRecord.actor_id == actor_id)
+            .order_by(IncidentRecord.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def list_open(self, limit: int = 50) -> list[IncidentRecord]:
+        """Return open (non-terminal) incidents, most recent first, bounded."""
+        return (
+            self.session.query(IncidentRecord)
+            .filter(IncidentRecord.state.in_(["open", "investigating", "contained"]))
+            .order_by(IncidentRecord.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def update_state(
+        self,
+        incident_id: str,
+        new_state: str,
+        resolved_by: str | None = None,
+        resolved_at: datetime.datetime | None = None,
+        state_note: str | None = None,
+    ) -> IncidentRecord | None:
+        """Update incident state in-place. Returns the updated record or None if not found.
+
+        The returned record has all attributes eagerly loaded (expunged from session)
+        so callers may access any attribute without a live session.
+        """
+        record = self.session.get(IncidentRecord, incident_id)
+        if record is None:
+            return None
+        record.state = new_state
+        if resolved_by is not None:
+            record.resolved_by = resolved_by
+        if resolved_at is not None:
+            record.resolved_at = resolved_at
+        if state_note is not None:
+            record.state_note = state_note
+        self.session.commit()
+        # Eagerly load all columns before expunging so the record is usable
+        # without an active session.
+        self.session.refresh(record)
+        self.session.expunge(record)
+        return record
 
 
 class SignalRepository:
@@ -233,6 +508,26 @@ class SignalRepository:
             .all()
         )
 
+    def get_by_transactions(
+        self,
+        transaction_ids: list[str],
+        limit: int = _INVESTIGATION_DEFAULT_LIMIT,
+    ) -> list[SecuritySignalRecord]:
+        """Batch fetch signals for a set of transaction IDs.
+
+        Uses a single IN query instead of N individual queries. Bounded by limit.
+        """
+        if not transaction_ids:
+            return []
+        limit = min(limit, _INVESTIGATION_MAX_LIMIT)
+        return (
+            self.session.query(SecuritySignalRecord)
+            .filter(SecuritySignalRecord.transaction_id.in_(transaction_ids))
+            .order_by(SecuritySignalRecord.created_at.asc())
+            .limit(limit)
+            .all()
+        )
+
 
 class ReceiptRepository:
     """Data access for decision receipts."""
@@ -240,25 +535,46 @@ class ReceiptRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def save(self, record: DecisionReceiptRecord) -> None:
+    def save(self, record: DecisionReceiptRecord, *, commit: bool = True) -> None:
         self.session.merge(record)
-        self.session.commit()
+        if commit:
+            self.session.commit()
 
-    def get(self, receipt_id: str) -> Optional[DecisionReceiptRecord]:
+    def get(self, receipt_id: str) -> DecisionReceiptRecord | None:
         return self.session.get(DecisionReceiptRecord, receipt_id)
 
-    def get_by_transaction(self, transaction_id: str) -> Optional[DecisionReceiptRecord]:
+    def get_by_transaction(self, transaction_id: str) -> DecisionReceiptRecord | None:
         return (
             self.session.query(DecisionReceiptRecord)
             .filter(DecisionReceiptRecord.transaction_id == transaction_id)
             .first()
         )
 
-    def get_latest(self) -> Optional[DecisionReceiptRecord]:
+    def get_latest(self) -> DecisionReceiptRecord | None:
         return (
             self.session.query(DecisionReceiptRecord)
             .order_by(DecisionReceiptRecord.timestamp.desc())
             .first()
+        )
+
+    def get_by_transactions(
+        self,
+        transaction_ids: list[str],
+        limit: int = _INVESTIGATION_DEFAULT_LIMIT,
+    ) -> list[DecisionReceiptRecord]:
+        """Batch fetch receipts for a set of transaction IDs.
+
+        Uses a single IN query. Bounded by limit.
+        """
+        if not transaction_ids:
+            return []
+        limit = min(limit, _INVESTIGATION_MAX_LIMIT)
+        return (
+            self.session.query(DecisionReceiptRecord)
+            .filter(DecisionReceiptRecord.transaction_id.in_(transaction_ids))
+            .order_by(DecisionReceiptRecord.timestamp.asc())
+            .limit(limit)
+            .all()
         )
 
 
@@ -272,7 +588,7 @@ class KeyRepository:
         self.session.merge(record)
         self.session.commit()
 
-    def get(self, key_id: str) -> Optional[KeyRecord]:
+    def get(self, key_id: str) -> KeyRecord | None:
         return self.session.get(KeyRecord, key_id)
 
     def list_all(self) -> list[KeyRecord]:

@@ -8,9 +8,17 @@ exist solely for persistence.
 import datetime
 
 from sqlalchemy import (
-    Column, String, Integer, Float, DateTime, Text, Boolean, ForeignKey, Index
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
 )
-from sqlalchemy.orm import relationship
 
 from finguard.storage.database import Base
 
@@ -39,16 +47,21 @@ class TransactionRecord(Base):
     session_id = Column(String, nullable=True)
     from_account = Column(String, nullable=False)
     to_account = Column(String, nullable=False)
-    amount = Column(Float, nullable=False)
+    amount = Column(Float, nullable=True)  # Non-authoritative Decimal display shadow for legacy schema compatibility.
+    amount_minor = Column(BigInteger, nullable=True)
+    canonical_version = Column(Integer, nullable=False, default=1)
     currency = Column(String, nullable=False)
     nonce = Column(String, nullable=False, unique=True)
     idempotency_key = Column(String, nullable=True, unique=True)
     timestamp = Column(DateTime, nullable=False)
     metadata_json = Column(Text, nullable=True)  # JSON
     state = Column(String, nullable=False, default="created")
+    version = Column(Integer, nullable=False, default=1)
+    failure_reason = Column(Text, nullable=True)
     canonical_hash = Column(String, nullable=True)
     signature = Column(String, nullable=True)
     signing_key_id = Column(String, nullable=True)
+    signed_version = Column(Integer, nullable=True)
     policy_version = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
@@ -67,6 +80,7 @@ class ApprovalRecord(Base):
     approval_id = Column(String, primary_key=True)
     transaction_id = Column(String, ForeignKey("transactions.transaction_id"), nullable=False)
     transaction_hash = Column(String, nullable=False)
+    transaction_version = Column(Integer, nullable=False, default=1)
     request_id = Column(String, nullable=True)
     policy_version = Column(String, nullable=True)
     policy_hash = Column(String, nullable=True)
@@ -95,6 +109,7 @@ class ApprovalRequestRecord(Base):
     transaction_id = Column(String, ForeignKey("transactions.transaction_id"),
                             nullable=False, unique=True)
     transaction_hash = Column(String, nullable=False)
+    transaction_version = Column(Integer, nullable=False, default=1)
     policy_version = Column(String, nullable=True)
     policy_hash = Column(String, nullable=True)
     required_approvals = Column(Integer, nullable=False, default=1)
@@ -110,6 +125,7 @@ class AuditEntryRecord(Base):
     __tablename__ = "audit_entries"
 
     entry_id = Column(Integer, primary_key=True, autoincrement=True)
+    seq = Column(Integer, nullable=False)
     timestamp = Column(DateTime, nullable=False)
     actor_id = Column(String, nullable=True)
     action = Column(String, nullable=False)
@@ -120,9 +136,26 @@ class AuditEntryRecord(Base):
     entry_hash = Column(String, nullable=False)
 
     __table_args__ = (
+        Index("ux_audit_entry_seq", "seq", unique=True),
         Index("ix_audit_timestamp", "timestamp"),
         Index("ix_audit_transaction", "transaction_id"),
     )
+
+
+class AuditCheckpointRecord(Base):
+    """Identity-signed commitment to a precise audit-ledger prefix."""
+    __tablename__ = "audit_checkpoints"
+
+    seq = Column(Integer, primary_key=True)
+    checkpoint_version = Column(Integer, nullable=False)
+    head_hash = Column(String, nullable=False)
+    previous_checkpoint_hash = Column(String, nullable=False)
+    checkpoint_hash = Column(String, nullable=False, unique=True)
+    created_at = Column(String, nullable=False)
+    signer_actor_id = Column(String, nullable=False)
+    key_id = Column(String, nullable=False)
+    algorithm = Column(String, nullable=False)
+    signature = Column(Text, nullable=False)
 
 
 class IncidentRecord(Base):
@@ -140,6 +173,15 @@ class IncidentRecord(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
     state = Column(String, nullable=False, default="open")
+    # Lifecycle additions — nullable for backwards compat with existing rows
+    resolved_by = Column(String, nullable=True)   # actor_id who last transitioned
+    state_note = Column(Text, nullable=True)       # free-text reason for last transition
+
+    __table_args__ = (
+        Index("ix_incidents_actor", "actor_id"),
+        Index("ix_incidents_state", "state"),
+        Index("ix_incidents_transaction", "transaction_id"),
+    )
 
 
 class SecuritySignalRecord(Base):
@@ -153,6 +195,10 @@ class SecuritySignalRecord(Base):
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+    __table_args__ = (
+        Index("ix_signals_transaction", "transaction_id"),
+    )
+
 
 class DecisionReceiptRecord(Base):
     """Cryptographically linked decision receipt."""
@@ -161,6 +207,8 @@ class DecisionReceiptRecord(Base):
     receipt_id = Column(String, primary_key=True)
     transaction_id = Column(String, ForeignKey("transactions.transaction_id"), nullable=False)
     transaction_hash = Column(String, nullable=False)
+    transaction_version = Column(Integer, nullable=False, default=1)
+    canonical_version = Column(Integer, nullable=False, default=1)
     actor_id = Column(String, nullable=True)
     session_id = Column(String, nullable=True)
     policy_id = Column(String, nullable=True)
@@ -199,15 +247,14 @@ class NonceRecord(Base):
 
 
 class SimulatorAccountRecord(Base):
-    """A synthetic account. This table never represents real money."""
+    """A synthetic account storing minor units. This table never represents real money."""
     __tablename__ = "simulator_accounts"
 
     account_id = Column(String, primary_key=True)
     currency = Column(String, nullable=False)
-    balance = Column(Float, nullable=False, default=0.0)
+    balance_minor = Column(BigInteger, nullable=False, default=0)
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
-
 
 class SimulatorExecutionRecord(Base):
     """Exactly one settled simulator movement per FinGuard transaction."""

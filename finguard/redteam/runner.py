@@ -1,10 +1,11 @@
 """Executable adversarial cases; attacks use the actual SDK and execution path."""
-from dataclasses import dataclass, field
 import os
-from pathlib import Path
 import tempfile
 import threading
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -12,11 +13,12 @@ from finguard.agent_sdk import FinGuardAgentClient
 from finguard.approvals.service import ApprovalService
 from finguard.attacks.scenario_loader import ScenarioLoader
 from finguard.core.enums import ActorType, Currency, DecisionType
-from finguard.core.errors import SecurityError
+from finguard.core.errors import KeystoreError, SecurityError
 from finguard.core.transaction import Transaction
 from finguard.crypto.keystore import Keystore
 from finguard.decision import DecisionEngine
 from finguard.identity.registry import IdentityRegistry
+from finguard.money import Money
 from finguard.redteam.coverage import coverage_by_id
 from finguard.signing import SigningGate
 from finguard.simulator import FinancialSimulator, SimulatorError
@@ -143,7 +145,7 @@ class RedTeamRunner:
             else:
                 result.update({"attack_id": attack_id, "attack_family": family})
                 report.results.append(result)
-        except Exception as exc:
+        except (AssertionError, ValueError, TypeError, RuntimeError) as exc:
             report.errors.append({"attack_id": attack_id, "attack_family": family, "error": str(exc)})
 
     @staticmethod
@@ -151,9 +153,9 @@ class RedTeamRunner:
         return FinancialSimulator().balances()
 
     @staticmethod
-    def _balance_delta(before: list[dict], after: list[dict]) -> float:
-        before_map = {(row["account_id"], row["currency"]): row["balance"] for row in before}
-        return sum(abs(row["balance"] - before_map.get((row["account_id"], row["currency"]), row["balance"])) for row in after)
+    def _balance_delta(before: list[dict], after: list[dict]) -> int:
+        before_map = {(row["account_id"], row["currency"]): row["balance_minor"] for row in before}
+        return sum(abs(row["balance_minor"] - before_map.get((row["account_id"], row["currency"]), row["balance_minor"])) for row in after)
 
     def _blocked_result(self, attack_id: str, family: str, reason: str, *, tx_id: str | None = None, before: list[dict] | None = None, signing: str = "not_applicable") -> dict:
         after = self._balances() if before is not None else None
@@ -164,7 +166,7 @@ class RedTeamRunner:
             "signing_status": signing, "balance_before": before, "balance_after": after,
         }
 
-    def _create_pending(self, amount: float = 5000, destination: str = "vendor-a", session_id: str | None = "redteam-session") -> Transaction:
+    def _create_pending(self, amount: str | int = 5000, destination: str = "vendor-a", session_id: str | None = "redteam-session") -> Transaction:
         tx = Transaction(actor_id="treasury-agent", session_id=session_id, from_account="treasury", to_account=destination, amount=amount, currency=Currency.INR, initiating_actor_type=ActorType.AGENT.value)
         result = DecisionEngine().decide(tx)
         if result.decision != DecisionType.REQUIRE_APPROVAL:
@@ -176,8 +178,17 @@ class RedTeamRunner:
         for key_id in (self.APPROVER_KEY, self.OPERATOR_KEY):
             try:
                 keystore.get_public_key(key_id)
-            except Exception:
+            except KeystoreError:
                 keystore.create_keypair(key_id, self.KEY_PASSWORD)
+        registry = IdentityRegistry()
+        approver = registry.get_actor("approver-1")
+        if approver and approver.public_key != keystore.get_public_key(self.APPROVER_KEY):
+            approver.public_key = keystore.get_public_key(self.APPROVER_KEY)
+            registry.register_actor(approver, registry.root_priv_path)
+        operator = IdentityRegistry().get_actor("operator-1")
+        if operator and operator.public_key != keystore.get_public_key(self.OPERATOR_KEY):
+            operator.public_key = keystore.get_public_key(self.OPERATOR_KEY)
+            IdentityRegistry().register_actor(operator, IdentityRegistry().root_priv_path)
 
     def _approve(self, tx: Transaction) -> None:
         ApprovalService().approve_transaction(tx.transaction_id, IdentityRegistry().get_actor("approver-1"), self.APPROVER_KEY, self.KEY_PASSWORD)
@@ -220,13 +231,19 @@ class RedTeamRunner:
         self._approve(tx)
         self._sign(tx)
         simulator = FinancialSimulator()
-        simulator.execute(tx.transaction_id)
+        original_result = simulator.execute(tx.transaction_id)
         before = simulator.balances()
         try:
-            simulator.execute(tx.transaction_id)
+            replay_result = simulator.execute(tx.transaction_id)
         except SimulatorError as exc:
             return self._blocked_result("RT-008", "replay", str(exc), tx_id=tx.transaction_id, before=before, signing="verified")
-        return {"expected_outcome": "blocked", "actual_outcome": "allowed", "funds_status": "observed", "funds_moved": self._balance_delta(before, simulator.balances()), "signing_status": "violation"}
+        after = simulator.balances()
+        if replay_result == original_result and self._balance_delta(before, after) == 0:
+            return self._blocked_result(
+                "RT-008", "replay", "Identical retry returned the stored result without another transfer",
+                tx_id=tx.transaction_id, before=before, signing="verified"
+            )
+        return {"expected_outcome": "blocked", "actual_outcome": "allowed", "funds_status": "observed", "funds_moved": self._balance_delta(before, after), "signing_status": "violation"}
 
     def run_approval_forgery(self) -> dict:
         self._prepare_keys()
@@ -290,15 +307,14 @@ class RedTeamRunner:
         self._sign(tx)
         simulator = FinancialSimulator()
         before = simulator.balances()
-        outcomes: list[str] = []
+        outcomes: list[dict | None] = []
         lock = threading.Lock()
 
         def execute() -> None:
             try:
-                simulator.execute(tx.transaction_id)
-                outcome = "executed"
+                outcome = simulator.execute(tx.transaction_id)
             except SimulatorError:
-                outcome = "rejected"
+                outcome = None
             with lock:
                 outcomes.append(outcome)
 
@@ -308,8 +324,13 @@ class RedTeamRunner:
         for thread in threads:
             thread.join()
         after = simulator.balances()
-        if outcomes.count("executed") == 1 and outcomes.count("rejected") == 3 and self._balance_delta(before, after) == tx.amount * 2:
-            return {"expected_outcome": "blocked", "actual_outcome": "blocked", "rejection": "three concurrent replays rejected", "funds_status": "observed", "funds_moved": 0, "authorized_movement": tx.amount, "signing_status": "verified", "concurrency": outcomes}
+        successful_results = [outcome for outcome in outcomes if outcome is not None]
+        if (
+            successful_results
+            and all(outcome == successful_results[0] for outcome in successful_results)
+            and self._balance_delta(before, after) == tx.amount_minor * 2
+        ):
+            return {"expected_outcome": "blocked", "actual_outcome": "blocked", "rejection": "concurrent retries share one committed result and one financial effect", "funds_status": "observed", "funds_moved": 0, "authorized_movement_minor": tx.amount_minor, "signing_status": "verified", "concurrency": outcomes}
         return {"expected_outcome": "blocked", "actual_outcome": "allowed", "funds_status": "observed", "funds_moved": self._balance_delta(before, after), "signing_status": "violation", "concurrency": outcomes}
 
     def run_identity_impersonation(self) -> dict:
@@ -345,7 +366,7 @@ class RedTeamRunner:
         self._prepare_keys()
         tx = self._create_pending()
         before = self._balances()
-        tx.amount = 95000
+        tx.amount = Money.from_decimal("95000.00", tx.currency)
         try:
             self._sign(tx)
         except SecurityError as exc:

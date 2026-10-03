@@ -13,12 +13,13 @@ SECURITY PROPERTIES:
 import json
 import os
 from pathlib import Path
+
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from finguard.core.config import get_config
 from finguard.core.errors import KeystoreError
-from finguard.crypto.encryption import derive_key_argon2id, encrypt_aes_gcm, decrypt_aes_gcm
+from finguard.crypto.encryption import decrypt_aes_gcm, derive_key_argon2id, encrypt_aes_gcm
 from finguard.crypto.signing import generate_keypair, public_key_to_hex
 from finguard.storage.database import get_session
 from finguard.storage.models import KeyRecord
@@ -120,10 +121,10 @@ class Keystore:
             priv_bytes = decrypt_aes_gcm(ciphertext, derived_key, nonce, associated_data=key_id.encode("utf-8"))
 
             return ed25519.Ed25519PrivateKey.from_private_bytes(priv_bytes)
-        except Exception as e:
-            if isinstance(e, KeystoreError):
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            if isinstance(exc, KeystoreError):
                 raise
-            raise KeystoreError(f"Failed to unlock key '{key_id}': invalid password or corrupt file") from e
+            raise KeystoreError(f"Failed to unlock key '{key_id}': invalid password or corrupt file") from exc
 
     def get_public_key(self, key_id: str) -> str:
         """Retrieve the public key hex for a given key_id without asking for a password."""
@@ -156,6 +157,6 @@ class Keystore:
                     "public_key_hex": data.get("public_key_hex"),
                     "fingerprint": data.get("fingerprint"),
                 })
-            except Exception:
+            except (OSError, ValueError, TypeError):
                 continue
         return keys

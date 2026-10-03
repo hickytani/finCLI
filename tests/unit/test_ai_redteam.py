@@ -132,7 +132,7 @@ def test_redteam_ai_command_is_registered_without_running_model(monkeypatch):
     def fake_command(repetitions=1):
         called.append(True)
 
-    import finguard.cli.attack_commands as attack_commands
+    from finguard.cli import attack_commands
     monkeypatch.setattr(attack_commands, "do_redteam_ai", fake_command)
     result = CliRunner().invoke(app, ["redteam", "ai"])
 

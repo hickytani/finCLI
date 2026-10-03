@@ -22,7 +22,7 @@ def test_validated_local_ai_extraction():
         "analysis": {"risk_level": "low", "confidence": 0.9, "signals": [], "reason": "explicit request"},
     })).extract("Pay vendor-a INR 5000 for invoice 4471")
     assert result.destination == "vendor-a"
-    assert result.amount == 5000
+    assert result.amount == "5000.00"
 
 
 def test_ambiguous_model_destination_is_rejected():

@@ -1,9 +1,12 @@
 """Unit tests for policy engine and agent approval floor invariant."""
 
+import pytest
+
 from finguard.core.enums import ActorType, DecisionType
 from finguard.core.transaction import Transaction
 from finguard.identity.registry import ActorConfig
 from finguard.policy.engine import PolicyEngine
+from finguard.policy.schema import PolicyConfig
 
 
 def test_policy_engine_allow_human_under_limit():
@@ -12,10 +15,10 @@ def test_policy_engine_allow_human_under_limit():
         actor_id="op-1",
         actor_type=ActorType.HUMAN_OPERATOR,
         display_name="Human Operator",
-        authority_limit=50000.0,
+        authority_limit="50000.00",
         allowed_destinations=["vendor-a"]
     )
-    tx = Transaction(actor_id="op-1", from_account="treasury", to_account="vendor-a", amount=5000.0)
+    tx = Transaction(actor_id="op-1", from_account="treasury", to_account="vendor-a", amount="5000.00")
 
     decision = engine.evaluate(tx, actor)
     assert decision.allowed is True
@@ -28,11 +31,11 @@ def test_policy_engine_agent_approval_floor_invariant():
         actor_id="agent-1",
         actor_type=ActorType.AGENT,
         display_name="Agent",
-        authority_limit=10000.0,
+        authority_limit="10000.00",
         allowed_destinations=["vendor-a"]
     )
     # Low amount transaction by agent
-    tx = Transaction(actor_id="agent-1", from_account="treasury", to_account="vendor-a", amount=100.0)
+    tx = Transaction(actor_id="agent-1", from_account="treasury", to_account="vendor-a", amount="100.00")
 
     decision = engine.evaluate(tx, actor)
     assert decision.allowed is False
@@ -47,12 +50,43 @@ def test_policy_engine_block_over_authority_limit():
         actor_id="agent-1",
         actor_type=ActorType.AGENT,
         display_name="Agent",
-        authority_limit=5000.0,
+        authority_limit="5000.00",
         allowed_destinations=["vendor-a"]
     )
-    tx = Transaction(actor_id="agent-1", from_account="treasury", to_account="vendor-a", amount=50000.0)
+    tx = Transaction(actor_id="agent-1", from_account="treasury", to_account="vendor-a", amount="50000.00")
 
     decision = engine.evaluate(tx, actor)
     assert decision.allowed is False
     assert decision.decision_type == DecisionType.BLOCK
     assert "IdentityAuthorityLimitRule" in decision.matched_rules
+
+
+def test_policy_amounts_are_exact_and_reject_excess_precision():
+    policy = PolicyConfig(
+        policy_id="exact-policy",
+        max_amount={"amount": "500.00", "currency": "USD"},
+    )
+    assert policy.max_amount.amount == "500.00"
+    with pytest.raises(ValueError, match="excess precision"):
+        PolicyConfig(
+            policy_id="inexact-policy",
+            max_amount={"amount": 0.001, "currency": "USD"},
+        )
+
+
+def test_policy_blocks_transaction_with_currency_mismatched_limit():
+    actor = ActorConfig(
+        actor_id="op-1",
+        actor_type=ActorType.HUMAN_OPERATOR,
+        display_name="Operator",
+        authority_limit="50000.00",
+        authority_currency="INR",
+        allowed_destinations=["vendor-a"],
+    )
+    tx = Transaction(
+        actor_id="op-1", from_account="treasury", to_account="vendor-a",
+        amount="1.00", currency="USD",
+    )
+    decision = PolicyEngine().evaluate(tx, actor)
+    assert decision.decision_type == DecisionType.BLOCK
+    assert any("currency" in reason.lower() for reason in decision.reasons)

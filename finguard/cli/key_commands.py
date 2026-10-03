@@ -2,11 +2,12 @@
 
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.prompt import Prompt
+from rich.table import Table
 
-from finguard.crypto.keystore import Keystore
 from finguard.core.errors import KeystoreError
+from finguard.crypto.keystore import Keystore
+from finguard.identity.registry import IdentityRegistry
 
 console = Console()
 
@@ -34,7 +35,11 @@ def do_key_list():
     console.print(table)
 
 
-def do_key_generate(key_id: str | None = None, passphrase: str | None = None):
+def do_key_generate(
+    key_id: str | None = None,
+    passphrase: str | None = None,
+    actor_id: str | None = None,
+):
     """Generate a new Ed25519 keypair and save it encrypted."""
     if not key_id:
         key_id = Prompt.ask("Enter unique Key ID", default="master-key")
@@ -54,11 +59,21 @@ def do_key_generate(key_id: str | None = None, passphrase: str | None = None):
 
     keystore = Keystore()
     try:
+        registry = IdentityRegistry() if actor_id else None
+        actor = registry.get_actor(actor_id) if registry and actor_id else None
+        if actor_id and not actor:
+            console.print(f"[bold red]Identity Error:[/bold red] Actor '{actor_id}' is not registered.")
+            raise typer.Exit(code=1)
         pub_hex = keystore.create_keypair(key_id, password)
+        if actor and registry:
+            actor.public_key = pub_hex
+            registry.register_actor(actor, registry.root_priv_path)
         console.print(f"[bold green]✓ Keypair '{key_id}' successfully created and encrypted![/bold green]")
-        console.print(f"Algorithm:   [cyan]Ed25519[/cyan]")
+        console.print("Algorithm:   [cyan]Ed25519[/cyan]")
         console.print(f"Public Key:  [dim]{pub_hex}[/dim]")
         console.print(f"Fingerprint: [magenta]{pub_hex[:16]}[/magenta]")
+        if actor:
+            console.print(f"Bound identity: [cyan]{actor.actor_id}[/cyan]")
     except KeystoreError as e:
         console.print(f"[bold red]Keystore Error:[/bold red] {e}")
         raise typer.Exit(code=1)
@@ -70,7 +85,7 @@ def do_key_inspect(key_id: str):
     try:
         pub_hex = keystore.get_public_key(key_id)
         console.print(f"[bold cyan]Key Details for '{key_id}':[/bold cyan]")
-        console.print(f"Algorithm:   [cyan]Ed25519[/cyan]")
+        console.print("Algorithm:   [cyan]Ed25519[/cyan]")
         console.print(f"Public Key:  [white]{pub_hex}[/white]")
         console.print(f"Fingerprint: [magenta]{pub_hex[:16]}[/magenta]")
     except KeystoreError as e:

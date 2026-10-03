@@ -1,22 +1,10 @@
-"""Canonical serialization for FIN//GUARD.
+"""Canonical serialization for FIN//GUARD (v1 legacy & v2 domain-separated).
 
-SECURITY PROPERTY: The same logical transaction must always produce the
-same canonical byte representation, regardless of Python dictionary ordering,
-floating-point representation, or datetime formatting.
-
-This module provides deterministic serialization that is suitable for
-cryptographic hashing and signature binding. It does NOT use Python's
-str(dict) or repr() — these are non-deterministic.
-
-DESIGN:
-- Fields are sorted lexicographically by key name
-- Numbers use fixed-point string representation (no scientific notation)
-- Datetimes use ISO-8601 with explicit UTC timezone
-- UUIDs use lowercase hex with hyphens
-- Enums use their .value
-- None is serialized as the string "null"
-- Output is UTF-8 encoded
-- No trailing whitespace or newlines
+SECURITY PROPERTY:
+- The same logical transaction must always produce the same canonical byte representation.
+- v2 canonical serialization uses integer minor units (amount_minor) and a domain separation prefix:
+  b"finguard.tx.v2\x00" + UTF-8(sorted_keys_compact_json).
+- v1 legacy verification is preserved for historical receipts, but new signatures require v2.
 """
 
 import datetime
@@ -26,16 +14,22 @@ import uuid
 from enum import Enum
 from typing import Any
 
+from finguard.core.errors import CanonicalizationError
+
+DOMAIN_PREFIX_V2 = b"finguard.tx.v2\x00"
+
 
 class CanonicalEncoder(json.JSONEncoder):
     """JSON encoder that produces deterministic output for all FIN//GUARD types."""
 
+    normalize_aware_datetime_to_utc = False
+
     def default(self, obj: Any) -> Any:
         if isinstance(obj, datetime.datetime):
-            # Always use UTC ISO-8601 with microsecond precision
             if obj.tzinfo is None:
-                # Treat naive datetimes as UTC
-                obj = obj.replace(tzinfo=datetime.timezone.utc)
+                obj = obj.replace(tzinfo=datetime.UTC)
+            elif self.normalize_aware_datetime_to_utc:
+                obj = obj.astimezone(datetime.UTC)
             return obj.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
         if isinstance(obj, datetime.date):
@@ -59,38 +53,50 @@ class CanonicalEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def canonical_serialize(data: dict) -> bytes:
-    """Produce deterministic canonical bytes from a dictionary.
+class CanonicalV2Encoder(CanonicalEncoder):
+    """Encoder that normalizes aware timestamps without changing legacy v1 bytes."""
 
-    INVARIANT: canonical_serialize(d1) == canonical_serialize(d2)
-    if and only if d1 and d2 represent the same logical data.
+    normalize_aware_datetime_to_utc = True
 
-    Args:
-        data: Dictionary of transaction/record fields.
 
-    Returns:
-        UTF-8 encoded canonical JSON bytes with sorted keys,
-        no extra whitespace, and deterministic type handling.
-    """
+def canonical_serialize_v1(data: dict) -> bytes:
+    """Legacy v1 canonical serialization (raw compact sorted JSON)."""
     canonical_json = json.dumps(
         data,
         cls=CanonicalEncoder,
         sort_keys=True,
         separators=(",", ":"),
-        ensure_ascii=True,  # Force ASCII for byte-level reproducibility
+        ensure_ascii=True,
     )
     return canonical_json.encode("utf-8")
 
 
-def canonical_amount(amount: float) -> str:
-    """Convert a monetary amount to a canonical string representation.
+def canonical_serialize_v2(data: dict) -> bytes:
+    """Canonical v2 serialization with domain separation prefix.
 
-    Uses fixed-point decimal with 2 decimal places to avoid
-    floating-point representation ambiguity.
-
-    SECURITY NOTE: This is critical for signature binding.
-    ₹10000.0 and ₹10000.00 must produce the same canonical form.
+    Preimage: b"finguard.tx.v2\\x00" + UTF-8(sorted_keys_compact_json)
     """
-    # Use Decimal for exact representation
+    canonical_json = json.dumps(
+        data,
+        cls=CanonicalV2Encoder,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return DOMAIN_PREFIX_V2 + canonical_json.encode("utf-8")
+
+
+def canonical_serialize(data: dict, version: int = 2) -> bytes:
+    """Produce deterministic canonical bytes from a dictionary for a given canonical version."""
+    if version == 1:
+        return canonical_serialize_v1(data)
+    elif version == 2:
+        return canonical_serialize_v2(data)
+    else:
+        raise CanonicalizationError(f"Unsupported canonical version: {version}")
+
+
+def canonical_amount(amount: str | int | decimal.Decimal) -> str:  # legacy v1 representation only
+    """Legacy v1 amount formatter (quantizes float to 2dp string)."""
     d = decimal.Decimal(str(amount)).quantize(decimal.Decimal("0.01"))
     return str(d)

@@ -8,6 +8,7 @@ SECURITY PROPERTIES:
 """
 
 import os
+
 from argon2 import PasswordHasher, Type
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -24,17 +25,15 @@ def derive_key_argon2id(password: str, salt: bytes) -> bytes:
     Returns:
         32-byte (256-bit) raw key.
     """
-    ph = PasswordHasher(
+    PasswordHasher(
         time_cost=3,
         memory_cost=65536,  # 64 MB
         parallelism=4,
         hash_len=32,
         salt_len=len(salt),
-        type=Type.ID
+        type=Type.ID,
     )
-    # Extract raw key using Argon2id hashing
-    hash_str = ph.hash(password, salt=salt)
-    # Re-derive raw bytes from password + salt deterministically via low-level argon2
+    # Re-derive raw bytes from password + salt deterministically via low-level argon2.
     import argon2.low_level as ll
     return ll.hash_secret_raw(
         secret=password.encode("utf-8"),

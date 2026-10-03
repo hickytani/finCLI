@@ -16,6 +16,7 @@ Usage:
 """
 
 import sys
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -32,10 +33,12 @@ if sys.platform == "win32":
 from finguard import __version__
 from finguard.core.config import get_config
 from finguard.identity.registry import IdentityRegistry
-from finguard.storage.database import init_db, get_session
+from finguard.storage.database import get_session, init_db
 from finguard.storage.repositories import (
-    TransactionRepository, ActorRepository, AuditRepository,
-    IncidentRepository, KeyRepository,
+    AuditRepository,
+    IncidentRepository,
+    KeyRepository,
+    TransactionRepository,
 )
 
 console = Console()
@@ -64,6 +67,7 @@ incident_app = typer.Typer(help="Security incident management.")
 decision_app = typer.Typer(help="Central authorization decision receipts.")
 agent_app = typer.Typer(help="Untrusted treasury agent orchestration.")
 simulator_app = typer.Typer(help="Local-only virtual financial system controlled by FinGuard.")
+investigate_app = typer.Typer(help="Forensic investigation: incidents, events, actors, timelines.")
 
 app.add_typer(key_app, name="key")
 app.add_typer(identity_app, name="identity")
@@ -80,14 +84,111 @@ app.add_typer(incident_app, name="incident")
 app.add_typer(decision_app, name="decision")
 app.add_typer(agent_app, name="agent")
 app.add_typer(simulator_app, name="simulator")
+app.add_typer(investigate_app, name="investigate")
+
+
+# ── Investigate commands ───────────────────────────────────────────────
+from finguard.cli.investigation_commands import (
+    do_actor_profile,
+    do_event_search,
+    do_incident_timeline,
+    do_incident_trace,
+    do_incident_transition,
+    do_tx_trace,
+)
+
+
+@investigate_app.command("incident-trace")
+def investigate_incident_trace(
+    incident_id: str = typer.Argument(help="Incident ID to trace."),
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Full forensic trace: incident → transaction → signals → receipt → audit."""
+    _ensure_init()
+    do_incident_trace(incident_id, output_json=json_out)
+
+
+@investigate_app.command("tx-trace")
+def investigate_tx_trace(
+    transaction_id: str = typer.Argument(help="Transaction ID to trace."),
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Full forensic trace for a single transaction."""
+    _ensure_init()
+    do_tx_trace(transaction_id, output_json=json_out)
+
+
+@investigate_app.command("events")
+def investigate_events(
+    actor: str = typer.Option(None, "--actor", help="Filter by actor ID."),
+    state: str = typer.Option(None, "--state", help="Filter by transaction state."),
+    to_account: str = typer.Option(None, "--to", help="Filter by destination account."),
+    from_account: str = typer.Option(None, "--from", help="Filter by source account."),
+    since: str = typer.Option(None, "--since", help="Start datetime (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)."),
+    until: str = typer.Option(None, "--until", help="End datetime (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)."),
+    min_amount: str = typer.Option(None, "--min-amount", help="Minimum transaction amount as decimal text."),
+    max_amount: str = typer.Option(None, "--max-amount", help="Maximum transaction amount as decimal text."),
+    page: int = typer.Option(1, "--page", help="Page number (1-based)."),
+    page_size: int = typer.Option(20, "--page-size", help="Results per page (max 100)."),
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Paginated, multi-filter security event search."""
+    _ensure_init()
+    do_event_search(
+        actor=actor,
+        state=state,
+        to_account=to_account,
+        from_account=from_account,
+        since=since,
+        until=until,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        page=page,
+        page_size=page_size,
+        output_json=json_out,
+    )
+
+
+@investigate_app.command("actor-profile")
+def investigate_actor_profile(
+    actor_id: str = typer.Argument(help="Actor ID to profile."),
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Security posture: risk contributors, incidents, signals, audit history."""
+    _ensure_init()
+    do_actor_profile(actor_id, output_json=json_out)
+
+
+@investigate_app.command("timeline")
+def investigate_timeline(
+    incident_id: str = typer.Argument(help="Incident ID to build timeline for."),
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Deterministic chronological timeline from real records."""
+    _ensure_init()
+    do_incident_timeline(incident_id, output_json=json_out)
+
+
+@investigate_app.command("transition")
+def investigate_transition(
+    incident_id: str = typer.Argument(help="Incident ID to transition."),
+    new_state: str = typer.Argument(help="Target state (investigating/contained/resolved/closed)."),
+    actor_id: str = typer.Option(..., "--actor", help="Actor performing the transition."),
+    note: str = typer.Option(None, "--note", help="Optional reason for the transition."),
+    json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Advance an incident lifecycle state with audit record."""
+    _ensure_init()
+    do_incident_transition(incident_id, new_state, actor_id, note=note, output_json=json_out)
+
 
 
 @decision_app.command("inspect")
 def decision_inspect(transaction_id: str = typer.Argument(help="Transaction ID.")):
     """Inspect the latest canonical decision receipt for a transaction."""
     _ensure_init()
+
     from finguard.storage.repositories import ReceiptRepository
-    import json
     session = get_session()
     try:
         receipt = ReceiptRepository(session).get_by_transaction(transaction_id)
@@ -102,16 +203,18 @@ def decision_inspect(transaction_id: str = typer.Argument(help="Transaction ID."
 def agent_run(task: str = typer.Argument(help="Natural-language payment task.")):
     """Run the bounded treasury agent (never grants signing authority)."""
     _ensure_init()
-    from finguard.agent import TreasuryAgent
     import json
+
+    from finguard.agent import TreasuryAgent
     console.print(json.dumps(TreasuryAgent().run(task), indent=2))
 
 
 @agent_app.command("status")
 def agent_status():
     """Show the configured agent model state."""
-    from finguard.ai.model import OllamaModel
     import json
+
+    from finguard.ai.model import OllamaModel
     console.print(json.dumps(OllamaModel().status(), indent=2))
 
 
@@ -119,8 +222,9 @@ def agent_status():
 def simulator_balances():
     """Show virtual account balances; this never accesses real money."""
     _ensure_init()
-    from finguard.simulator import FinancialSimulator
     import json
+
+    from finguard.simulator import FinancialSimulator
     console.print(json.dumps(FinancialSimulator().balances(), indent=2))
 
 
@@ -128,13 +232,14 @@ def simulator_balances():
 def simulator_execute(transaction_id: str = typer.Argument(help="FinGuard-signed transaction ID.")):
     """Execute a signed transaction in the local simulator only."""
     _ensure_init()
-    from finguard.simulator import FinancialSimulator
     import json
+
+    from finguard.simulator import FinancialSimulator
     try:
         console.print(json.dumps(FinancialSimulator().execute(transaction_id), indent=2))
-    except Exception as exc:
+    except (RuntimeError, ValueError, TypeError) as exc:
         console.print(f"[bold red]SIMULATOR BLOCKED:[/bold red] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
 
 def _ensure_init() -> None:
@@ -224,11 +329,12 @@ def key_list():
 def key_generate(
     key_id: str = typer.Option(None, "--key-id", help="Custom key identifier."),
     passphrase: str = typer.Option(None, "--passphrase", help="Passphrase for non-interactive key generation."),
+    actor_id: str = typer.Option(None, "--actor-id", help="Bind the key to an identity using the root-signed registry."),
 ):
     """Generate a new Ed25519 signing keypair."""
     _ensure_init()
     from finguard.cli.key_commands import do_key_generate
-    do_key_generate(key_id, passphrase)
+    do_key_generate(key_id, passphrase, actor_id)
 
 
 @key_app.command("inspect")
@@ -265,14 +371,15 @@ def identity_register(
     actor_id: str = typer.Option(..., "--actor-id", help="Actor ID."),
     actor_type: str = typer.Option(..., "--type", help="Actor type (human_operator or agent)."),
     display_name: str = typer.Option(..., "--name", help="Display name."),
-    limit: float = typer.Option(10000.0, "--limit", help="Authority limit."),
+    limit: str = typer.Option("10000.00", "--limit", help="Authority limit as decimal text."),
     destinations: str = typer.Option("", "--destinations", help="Comma-separated allowed destinations."),
     root_key: str = typer.Option(..., "--root-key", help="Path to root operator private key."),
+    public_key: str = typer.Option(None, "--public-key", help="Approver public key to bind in the signed identity registry."),
 ):
     """Register a new actor (requires root operator key to re-sign registry)."""
     _ensure_init()
     from finguard.cli.identity_commands import do_identity_register
-    do_identity_register(actor_id, actor_type, display_name, limit, destinations, root_key)
+    do_identity_register(actor_id, actor_type, display_name, limit, destinations, root_key, public_key)
 
 
 # ── Agent Request Commands (Constrained Allowlist) ─────────────────────
@@ -280,7 +387,7 @@ def identity_register(
 def agent_tx_create(
     from_account: str = typer.Option(..., "--from", help="Source account."),
     to_account: str = typer.Option(..., "--to", help="Destination account."),
-    amount: float = typer.Option(..., "--amount", help="Transaction amount."),
+    amount: str = typer.Option(..., "--amount", help="Transaction amount as a decimal string."),
     currency: str = typer.Option("INR", "--currency", help="Currency code."),
     actor: str = typer.Option("treasury-agent", "--actor", help="Agent Actor ID."),
     session: str = typer.Option(None, "--session", help="Session ID."),
@@ -296,7 +403,7 @@ def agent_tx_create(
 def tx_create(
     from_account: str = typer.Option(..., "--from", help="Source account."),
     to_account: str = typer.Option(..., "--to", help="Destination account."),
-    amount: float = typer.Option(..., "--amount", help="Transaction amount."),
+    amount: str = typer.Option(..., "--amount", help="Transaction amount as a decimal string."),
     currency: str = typer.Option("INR", "--currency", help="Currency code."),
     actor: str = typer.Option(None, "--actor", help="Actor ID."),
     metadata: str = typer.Option(None, "--metadata", help="JSON metadata."),
@@ -484,10 +591,22 @@ def audit_show(
 
 @audit_app.command("verify")
 def audit_verify():
-    """Verify audit ledger hash chain integrity."""
+    """Verify audit sequence, hash chain, and signed checkpoints."""
     _ensure_init()
     from finguard.cli.audit_commands import do_audit_verify
     do_audit_verify()
+
+
+@audit_app.command("checkpoint")
+def audit_checkpoint(
+    key_id: str = typer.Option(..., "--key-id", help="Registered Ed25519 key ID."),
+    signer_actor_id: str = typer.Option(..., "--actor-id", help="Registered signer identity."),
+    output: str = typer.Option(None, "--output", "-o", help="Optional checkpoint evidence JSON path."),
+):
+    """Sign the current ledger head using an identity-bound key."""
+    _ensure_init()
+    from finguard.cli.audit_commands import do_audit_checkpoint
+    do_audit_checkpoint(key_id, signer_actor_id, output)
 
 
 @audit_app.command("export")

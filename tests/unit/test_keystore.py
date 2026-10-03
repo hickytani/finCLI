@@ -1,8 +1,9 @@
 """Unit tests for encrypted software keystore."""
 
 import pytest
-from finguard.crypto.keystore import Keystore
+
 from finguard.core.errors import KeystoreError
+from finguard.crypto.keystore import Keystore
 
 
 def test_keystore_generate_and_unlock(tmp_path):

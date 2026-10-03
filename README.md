@@ -55,6 +55,17 @@ flowchart TD
 The CLI is the developer and security interface. The product is the enforced
 boundary from an untrusted request to virtual execution.
 
+## Exact Money and Canonical Transactions
+
+New transaction amounts are accepted as decimal strings (or integers) and are
+immediately converted to immutable integer minor units plus a supported
+currency. Binary floats, excess precision, non-finite values, booleans, and
+ambiguous decimal syntax are rejected. Transaction signatures use canonical v2
+with the `finguard.tx.v2\x00` domain prefix and an integer `amount_minor` field.
+See [docs/money-and-canonicalization.md](docs/money-and-canonicalization.md)
+for supported exponents, wire formats, legacy verification behavior, and the
+current database migration limitation.
+
 ## Project Positioning
 
 FinGuard does not claim to invent payment authorization, IAM, fraud detection,
