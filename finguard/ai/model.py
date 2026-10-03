@@ -9,23 +9,30 @@ class LocalModelError(RuntimeError):
 
 
 class OllamaModel:
-    def __init__(self, model: str = "qwen3:0.6b", endpoint: str = "http://127.0.0.1:11434", timeout_seconds: int = 180):
+    MAX_RESPONSE_BYTES = 65_536
+
+    def __init__(self, model: str = "qwen3:0.6b", endpoint: str = "http://127.0.0.1:11434", timeout_seconds: int = 10):
         self.model, self.endpoint, self.timeout_seconds = model, endpoint.rstrip("/"), timeout_seconds
 
     def generate_json(self, prompt: str) -> dict:
+        if len(prompt.encode("utf-8")) > 16_384:
+            raise ValueError("Model prompt exceeds the configured size limit")
         payload = json.dumps({"model": self.model, "stream": False, "format": "json", "think": False, "options": {"temperature": 0, "num_predict": 300}, "messages": [{"role": "user", "content": prompt}]}).encode()
         request = urllib.request.Request(f"{self.endpoint}/api/chat", data=payload, headers={"Content-Type": "application/json"}, method="POST")
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                body = json.loads(response.read().decode())
+                response_bytes = response.read(self.MAX_RESPONSE_BYTES + 1)
+            if len(response_bytes) > self.MAX_RESPONSE_BYTES:
+                raise ValueError("Model response exceeds the configured size limit")
+            body = json.loads(response_bytes.decode())
             content = body["message"]["content"]
             if not isinstance(content, str):
-                raise ValueError("Ollama response content was not text")
+                raise TypeError("Ollama response content was not text")
             parsed = json.loads(content)
             if not isinstance(parsed, dict):
-                raise ValueError("Ollama response was not a JSON object")
+                raise TypeError("Ollama response was not a JSON object")
             return parsed
-        except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as exc:
+        except (urllib.error.URLError, TimeoutError, KeyError, TypeError, ValueError) as exc:
             raise LocalModelError(f"Local model unavailable or returned invalid JSON: {exc}") from exc
 
     def status(self) -> dict:

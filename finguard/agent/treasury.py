@@ -1,35 +1,61 @@
-"""A deliberately small agent boundary.
-
-An optional local-model adapter may provide a structured plan, but only the
-allowlisted SDK methods are callable. No adapter receives a signing key.
-"""
+"""One-shot treasury-agent facade; authorization remains in FinGuard core."""
+import asyncio
+import uuid
 from dataclasses import dataclass
 
-from finguard.agent_sdk import FinGuardAgentClient
-from finguard.audit.ledger import AuditLedger
+from finguard.agent.boundary import AgentRequest, AgentSecurityBoundary
 from finguard.ai import LocalAIAnalyzer
+from finguard.core.errors import SecurityError
+from finguard.identity.registry import IdentityRegistry
 
 
 @dataclass
 class TreasuryAgent:
     actor_id: str = "treasury-agent"
     model_name: str = "qwen3:0.6b"
+    source_account: str | None = None
+    session_id: str | None = None
     analyzer: LocalAIAnalyzer | None = None
 
-    def run(self, task: str) -> dict:
-        """Use a real local model, validate it, then use the bounded SDK only."""
-        try:
-            extracted = (self.analyzer or LocalAIAnalyzer()).extract(task)
-        except Exception as exc:
-            AuditLedger().append("AI_ANALYSIS_FAILED", self.actor_id, result="BLOCK", metadata={"model": self.model_name, "error": type(exc).__name__})
-            return {"status": "CLARIFICATION_REQUIRED", "reason": "AI extraction failed or was invalid; no transaction was created."}
-        result = FinGuardAgentClient(self.actor_id).create_transaction(
-            extracted.amount,
-            extracted.currency,
-            extracted.destination,
-            extracted.purpose,
-            {"ai_analysis": extracted.analysis.model_dump(), "source": "local-llm"},
-            ai_assessment={"status": "ADVISORY", "model": self.model_name, **extracted.analysis.model_dump()},
+    def run(self, task: str, *, request_id: uuid.UUID | None = None) -> dict:
+        """Extract once and submit one request through the fixed proposal boundary."""
+        actor = IdentityRegistry().get_actor(self.actor_id)
+        if actor is None:
+            raise SecurityError("Agent identity is unknown or inactive")
+        explicit_sources = [
+            account for account in actor.allowed_source_accounts if account != "*"
+        ]
+        if not explicit_sources or "*" in actor.allowed_source_accounts:
+            raise SecurityError("Agent identity needs explicit source-account grants")
+        boundary = AgentSecurityBoundary(
+            actor_id=self.actor_id,
+            source_account=self.source_account or explicit_sources[0],
+            session_id=self.session_id,
+            analyzer=self.analyzer or LocalAIAnalyzer(),
         )
-        AuditLedger().append("AGENT_TOOL_CREATE_TRANSACTION", self.actor_id, result.transaction.transaction_id, result.decision.value.upper(), {"model": self.model_name, "receipt_id": result.receipt.receipt_id, "ai_risk": extracted.analysis.risk_level})
-        return {"status": result.decision.value, "transaction_id": result.transaction.transaction_id, "receipt_id": result.receipt.receipt_id, "ai_analysis": extracted.analysis.model_dump(), "reason": result.receipt.reasons}
+        result = asyncio.run(
+            boundary.run(
+                AgentRequest(request_id=request_id or uuid.uuid4(), request_text=task)
+            )
+        )
+        status = (
+            result.decision
+            if result.decision is not None
+            else "CLARIFICATION_REQUIRED"
+            if result.state.value in {"rejected", "timed_out", "cancelled"}
+            else result.state.value
+        )
+        return {
+            "status": status,
+            "agent_state": result.state.value,
+            "transaction_id": result.transaction_id,
+            "receipt_id": result.receipt_id,
+            "decision": result.decision,
+            "reason": (
+                result.observation.reasons
+                if result.observation
+                else [result.error_code] if result.error_code else []
+            ),
+            "correlation_id": str(result.correlation_id),
+            "intent_id": str(result.intent.intent_id) if result.intent else None,
+        }

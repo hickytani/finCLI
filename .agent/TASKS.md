@@ -12,7 +12,7 @@
 - [x] Reproducible defect proof suite created: `tests/regression/test_baseline_findings.py` (FG-201..FG-206).
 - [x] DevTools MCP server implemented: `tools/devtools_mcp.py` (`run_tests`, `run_attacks`, `run_bench`, `invariant_status`, `list_open_tickets`).
 - [-] Makefile target names exist; `docs` remains a placeholder and `attack-loop` is not the documented seeded randomized fail-fast loop.
-- [x] Invariants matrix updated to I1-I14 in `docs/INVARIANTS.md`.
+- [x] Invariants matrix updated to I1-I23 in `docs/INVARIANTS.md`.
 - [x] Baseline performance benchmark script (`scripts/bench.py`) committed.
 
 ### M1 - Money and Authority (FG-201, FG-202, FG-203, FG-204, FG-205, FG-206)
@@ -35,22 +35,23 @@
 - [ ] Independent verifier sign-off and human approval for canonical byte/golden-vector change (G6).
 - [x] Previously failing `test_redteam_hardening_pass.py` cases now pass in the current full-suite run (207 passed).
 - [ ] Finish legacy database audit/quarantine/rollback and actual pre-change v1 artifact verification.
-- [ ] Signed ledger checkpoints/external anchoring remain necessary against full SQLite-file rewrite.
+- [ ] External anchoring remains necessary to detect truncation to an earlier valid signed checkpoint in a rewritten SQLite file.
 
 ### M2 - Integrity and Atomicity (FG-301, FG-302, FG-303, FG-304)
 - [x] Transaction row version and decision-path CAS state update; exact completed idempotency retry returns its stored receipt/result, changed signed content with a reused key is rejected.
 - [-] M2.1 authority-chain core: decision receipt/hash/version, signed-registry approver/signer keys, version-bound approvals, signing CAS, execution-time chain verification, and execution CAS with balance/unique-result transaction. Signature bytes do not bind lifecycle version; process-level and crash-boundary proofs remain open.
-- [x] M2.2 requested acceptance: decision/nonce/receipt/audit, approval/signing evidence, and simulator execution share SQLite transactions; injected rollback/reload/retry tests pass; execution alone uses `BEGIN IMMEDIATE` + 5000 ms busy timeout; spawned-process retries return one result/effect. Forced process death and process-level decision/signing races remain follow-up work.
+- [x] M2.2 requested acceptance: decision/nonce/receipt/audit, approval/signing evidence, and simulator execution share SQLite transactions; injected rollback/reload/retry tests pass; execution alone uses `BEGIN IMMEDIATE` + 5000 ms busy timeout; spawned-process signing and execution races preserve one signature/effect. Forced process death and process-level decision races remain follow-up work.
 - [ ] Review whether signing bytes must include lifecycle version; current signature remains over canonical v2 bytes and signed-version evidence is checked separately. Any signature-envelope change requires crypto/security review.
 - [ ] FG-301: Atomic Unit of Work for decision pipeline (single session, `BEGIN IMMEDIATE`, SQLite WAL).
 - [x] FG-302: CAS signing gate (`UPDATE ... WHERE state = expected`) and simulator execution CAS.
-- [ ] FG-303: Monotonic `seq` ledger, SQLite triggers, signed checkpoints `{seq, head_hash, ts, key_id, signature}`.
+- [x] FG-303: Monotonic `seq` ledger and identity-key-bound signed checkpoints `{seq, head_hash, ts, key_id, signature}`; checkpoint creation/verification is atomic and tested. External anchoring remains open.
 - [ ] FG-304: Unified aware-UTC `Clock` service; remove naive `_utcnow()` shim.
 
 ### M3 - LLM Provider Layer & Evaluation Harness (FG-401)
 - [ ] FG-401: `LLMProvider` protocol (Ollama & OpenAI-compatible HTTP providers).
 - [ ] FG-401: Evaluation harness (benign + attack catalog with >= 30 variants per category).
 - [ ] FG-401: Multi-model evaluation report (`docs/RESULTS.md`) with Wilson 95% CIs.
+- [x] FG-402: Establish a one-shot AI/agent boundary with strict structured intent, server-bound identity/source/time, one allowlisted proposal capability, bounded execution/cancellation, local evidence verification, and adversarial regressions. Boundary suite passes (35 tests), combined boundary/integration/red-team slice passes (46), and the full suite passes (274). Reuses `DecisionEngine`, approval, signing, simulator, and on-demand signed ledger checkpoints; no autonomous signing/execution or product MCP server.
 
 ### M4 - FIN//GUARD MCP Server (FG-501)
 - [ ] FG-501: FastMCP package `finguard.mcp` exposing ONLY `propose_transaction`, `get_decision`, `list_transactions`, `get_audit_proof`.
