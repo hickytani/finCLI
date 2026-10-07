@@ -121,7 +121,7 @@ class Keystore:
             priv_bytes = decrypt_aes_gcm(ciphertext, derived_key, nonce, associated_data=key_id.encode("utf-8"))
 
             return ed25519.Ed25519PrivateKey.from_private_bytes(priv_bytes)
-        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError, TypeError, json.JSONDecodeError, KeyError) as exc:
             if isinstance(exc, KeystoreError):
                 raise
             raise KeystoreError(f"Failed to unlock key '{key_id}': invalid password or corrupt file") from exc

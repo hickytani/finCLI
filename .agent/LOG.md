@@ -144,3 +144,11 @@
 - Focused process/recovery suite: 39 passed before the stale-version case was added; final focused decision/approval/signing/execution suite: 49 passed. The spawned-process race passed 3/3 repeated runs.
 - Final full suite: `py -m pytest -q` -> 221 passed, 0 failed in 51.37s. Final `git diff --check` and status/history checks follow this log update.
 - Lifecycle review outcome: lifecycle `version` is a CAS concurrency token rather than caller-controlled authorization content. SigningGate captures the authorized row version and atomically records `signed_version` with the signature and signing audit; execution requires row version equality plus signing evidence. The stale-version regression proves a changed row version cannot execute. Canonical signature bytes remain unchanged; full-file rewrite can alter/recompute the co-located unkeyed ledger, so signing-envelope binding remains a separate security review item.
+
+## Project Assessment Snapshot (2026-10-05)
+
+- Observed current behavior before recording the assessment: repository is on `m4-bounded-orchestration` at `abce1a3`, one commit ahead of `origin/main`; current working tree already contains a whitespace-only import-block edit in `finguard/decision/engine.py`. This existing edit was preserved.
+- Full validation with the configured Python 3.13.7 environment: `python -m pytest -q` -> 313 passed; branch-coverage run -> 313 passed, 71% total; Ruff -> one I001 import-format finding on the pre-existing whitespace line. Full tests emitted SQLAlchemy `datetime.utcnow()` deprecation warnings.
+- GitHub metadata inspection: repository owner is `hickytani`; local Git user.name is already `hickytani`; current GitHub integration is read-only, and the local M4 branch is not present in the remote branch list. No push or commit was made.
+- Runtime checks of `finguard/agent/orchestrator.py` confirmed empty capability lists default to `transaction.propose`, a caller can override configured capabilities with `transaction.admin`, and `complete()` can move an `APPROVAL_REQUIRED` run to `COMPLETED`. Budget exhaustion also raises while leaving the run nonterminal. Findings and scope limitations are recorded in `docs/PROJECT-ASSESSMENT-2026-10-05.md`.
+- Project assessment is recorded as a dated snapshot; no product code was changed and no valuation number was fabricated.

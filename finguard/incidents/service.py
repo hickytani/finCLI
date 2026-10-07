@@ -223,10 +223,21 @@ class IncidentService:
                         "note": note or "",
                     },
                 )
-            except (OSError, RuntimeError, ValueError):
-                # Audit failure must not undo the transition (security integrity).
-                # This is a best-effort witness path and is intentionally non-fatal.
-                pass
+            except Exception as audit_exc:  # noqa: BLE001
+                # The state transition has already been committed.
+                # Reversing it would create a worse inconsistency, so we
+                # keep the transition but LOUDLY log the audit failure so
+                # that operators can detect and manually re-record the entry.
+                # This satisfies the "never silent" requirement (FG-805).
+                import logging as _logging
+                _logging.getLogger(__name__).error(
+                    "AUDIT FAILURE: incident transition committed but audit append failed. "
+                    "Manual review required. incident_id=%s from=%s to=%s error=%r",
+                    incident_id,
+                    current_state,
+                    new_state,
+                    audit_exc,
+                )
 
             return updated
         finally:
