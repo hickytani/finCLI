@@ -88,6 +88,8 @@ _PROHIBITED_TOOLS: frozenset[str] = frozenset(
 # ─── Authority-shaped fields that must never appear in any MCP input ───────
 _AUTHORITY_FIELDS: frozenset[str] = frozenset(
     {
+        "actor_id",
+        "session_id",
         "approved",
         "authorized",
         "authorization",
@@ -100,12 +102,21 @@ _AUTHORITY_FIELDS: frozenset[str] = frozenset(
         "grant_capability",
         "admin",
         "root",
-        "signing_key",
-        "approve",
-        "sign",
+        "max_steps",
+        "max_tool_calls",
+        "financial_limit",
+        "deadline",
+        "policy_version",
+        "capabilities",
         "private_key",
         "secret",
         "credential",
+        "password",
+        "token",
+        "key",
+        "signing_key",
+        "approve",
+        "sign",
     }
 )
 
