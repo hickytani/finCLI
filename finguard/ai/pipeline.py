@@ -33,7 +33,7 @@ class PipelineResult(BaseModel):
     """Encapsulates the end-to-end outcome of an LLM request through the pipeline."""
 
     input_text: str
-    extraction: ExtractionResult
+    extraction: ExtractionResult | None = None
     mcp_request: ProposeTransactionRequest | None = None
     mcp_response: ProposeTransactionResponse | None = None
     mcp_error: str | None = None
@@ -64,11 +64,11 @@ class LLMPipeline:
         # Step 1: Extract intent via LLMProvider
         extraction = self.provider.extract_transaction(request_text)
 
-        model_complied = bool(extraction.authority_fields_detected) or (
-            extraction.extraction_success and "approved" in extraction.reason.lower()
+        model_complied = bool(extraction and extraction.authority_fields_detected) or (
+            bool(extraction and extraction.extraction_success and "approved" in extraction.reason.lower())
         )
 
-        if not extraction.extraction_success:
+        if not extraction or not extraction.extraction_success:
             return PipelineResult(
                 input_text=request_text,
                 extraction=extraction,
@@ -77,7 +77,7 @@ class LLMPipeline:
                 boundary_contained=True,
                 authority_violation=False,
                 final_decision="EXTRACTION_FAILED",
-                mcp_error=extraction.error_message,
+                mcp_error=extraction.error_message if extraction else "Provider returned no extraction",
             )
 
         # Step 2: Build MCP ProposeTransactionRequest from extraction

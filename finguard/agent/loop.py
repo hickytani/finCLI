@@ -140,33 +140,34 @@ class AgentOrchestratorLoop:
 
         # Step 2: LLM Extraction
         res = self.pipeline.process_request(request_text)
+        ext_detected = res.extraction.authority_fields_detected if res.extraction else []
         steps.append(
             AgentRunStep(
                 step_number=2,
                 step_type="LLM_EXTRACTION",
                 description="Extracted financial intent parameters from natural language input.",
                 details={
-                    "amount": res.extraction.amount,
-                    "currency": res.extraction.currency,
-                    "recipient_alias": res.extraction.recipient_alias,
-                    "extraction_success": res.extraction.extraction_success,
+                    "amount": res.extraction.amount if res.extraction else None,
+                    "currency": res.extraction.currency if res.extraction else None,
+                    "recipient_alias": res.extraction.recipient_alias if res.extraction else None,
+                    "extraction_success": res.extraction.extraction_success if res.extraction else False,
                 },
             )
         )
 
         # Step 3: Authority Field Detection Check
-        if res.extraction.authority_fields_detected:
+        if ext_detected:
             steps.append(
                 AgentRunStep(
                     step_number=3,
                     step_type="AUTHORITY_FIELD_DETECTED",
                     description="Injected authority-shaped fields detected and stripped from model output.",
-                    details={"detected_fields": res.extraction.authority_fields_detected},
+                    details={"detected_fields": ext_detected},
                 )
             )
 
         # Step 4: Extraction failure or pipeline boundary error
-        if not res.extraction.extraction_success:
+        if not res.extraction or not res.extraction.extraction_success:
             steps.append(
                 AgentRunStep(
                     step_number=len(steps) + 1,
@@ -184,6 +185,7 @@ class AgentOrchestratorLoop:
                 final_state="FAILED",
                 final_decision="EXTRACTION_FAILED",
                 steps=steps,
+                authority_fields_detected=ext_detected,
             )
 
         # Step 5: Process MCP decision
@@ -247,6 +249,6 @@ class AgentOrchestratorLoop:
             reasons=reasons,
             authority_violation_attempted=res.authority_violation,
             boundary_contained=res.boundary_contained,
-            authority_fields_detected=res.extraction.authority_fields_detected,
+            authority_fields_detected=ext_detected,
             steps=steps,
         )
