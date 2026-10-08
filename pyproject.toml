@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "finguard"
-version = "0.1.0"
+version = "0.2.0"
 description = "CLI-first transaction security runtime and adversarial research laboratory"
 readme = "README.md"
 license = {text = "MIT"}

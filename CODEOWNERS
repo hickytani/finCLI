@@ -1,0 +1,31 @@
+# Code Owners
+
+# Global owner - all files
+* @hickytani
+
+# Core security boundaries - require explicit review
+finguard/signing/    @hickytani
+finguard/crypto/     @hickytani
+finguard/decision/   @hickytani
+finguard/audit/      @hickytani
+finguard/mcp/        @hickytani
+finguard/core/       @hickytani
+
+# Money and canonicalization - any change to money paths requires sign-off
+finguard/money.py    @hickytani
+finguard/core/canonical.py  @hickytani
+
+# Policy and authority - trust-boundary changes
+finguard/policy/     @hickytani
+finguard/identity/   @hickytani
+
+# Tests - security and regression suites
+tests/regression/    @hickytani
+tests/security/      @hickytani
+tests/attack/        @hickytani
+
+# CI / release / supply chain
+.github/             @hickytani
+pyproject.toml       @hickytani
+SECURITY.md          @hickytani
+SBOM.json            @hickytani

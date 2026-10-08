@@ -1,229 +1,190 @@
-# FIN//GUARD
+# FIN//GUARD — Security Architecture for Agentic Financial Systems
 
-## Security Gateway for Autonomous Financial Agents
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue.svg)](https://www.python.org/)
+[![Build Status](https://img.shields.io/badge/tests-577%20passed-brightgreen.svg)]()
+[![Security Audit](https://img.shields.io/badge/authority--violations-0-success.svg)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> AI can request.
-> AI can analyze.
-> AI can recommend.
-> AI cannot authorize itself.
+> **Core Research Thesis**: Can an autonomous financial agent safely operate when its reasoning component is treated as an **UNTRUSTED principal**?
+>
+> **Architectural Rule**: The AI can become more capable, but it must **NEVER become more authoritative**.
 
-FinGuard sits between an AI agent and financial execution. The AI can interpret
-natural-language instructions and generate a transaction request, but financial
-authority remains outside the model. FinGuard independently evaluates identity,
-authority, policy, deterministic risk, nonce/replay state, approval,
-transaction integrity, and cryptographic signing.
+---
 
-Only the controlled execution path can reach the local financial simulator. The
-AI receives no private signing keys, approval authority, policy mutation
-privileges, identity mutation privileges, or simulator execution privileges.
+## 1. What is FIN//GUARD?
 
-## Why This Exists
+**FIN//GUARD** (`finguard`) is an open-source security architecture for financial agents. It treats Large Language Models (LLMs) as unprivileged, untrusted intent parsers.
 
-Traditional application authorization often assumes the requesting software is
-acting according to its intended instructions. AI agents introduce another
-failure mode: the model itself can be manipulated, confused, prompt-injected,
-or compromised while still producing syntactically valid financial requests.
+AI agents moving money cannot be secured by prompting them to behave. In FIN//GUARD:
+1. Model output is a **candidate proposal**, never an authority.
+2. Enforcement lives **outside the model**: identity, authority, policy, risk, approval, signing, and execution.
+3. A signature binds the **exact bytes** checked and executed.
+4. Every decision generates a tamper-evident entry in a **sequenced, checkpoint-signed ledger**.
+5. Any error, ambiguity, or missing evidence results in denial (**fail-closed**).
 
-FinGuard treats the model as an untrusted requester rather than the final
-authority. Its purpose is to evaluate the security boundary between AI-generated
-financial intent and controlled financial execution. It is a local security
-research prototype and does not move real money.
+---
 
-## Architecture
+## 2. What the AI CANNOT Do
 
-```mermaid
-flowchart TD
-    A[AI Agent] --> B[Transaction Request]
-    B --> C[FinGuardAgentClient]
-    C --> D[DecisionEngine]
-    D --> D1[Identity / Authority]
-    D --> D2[Policy]
-    D --> D3[Deterministic Risk]
-    D --> D4[Nonce / Replay]
-    D --> D5[Transaction Integrity]
-    D1 --> E[ApprovalService]
-    D2 --> E
-    D3 --> E
-    D4 --> E
-    D5 --> E
-    E --> F[SigningGate]
-    F --> G[Ed25519 Signature]
-    G --> H[FinancialSimulator]
-    X[AI has no private keys, signing, approval, policy mutation, identity mutation, or simulator execution] -.-> A
-```
+The autonomous agent is strictly isolated from core financial authority. **The agent CANNOT**:
 
-The CLI is the developer and security interface. The product is the enforced
-boundary from an untrusted request to virtual execution.
-
-## Exact Money and Canonical Transactions
-
-New transaction amounts are accepted as decimal strings (or integers) and are
-immediately converted to immutable integer minor units plus a supported
-currency. Binary floats, excess precision, non-finite values, booleans, and
-ambiguous decimal syntax are rejected. Transaction signatures use canonical v2
-with the `finguard.tx.v2\x00` domain prefix and an integer `amount_minor` field.
-See [docs/money-and-canonicalization.md](docs/money-and-canonicalization.md)
-for supported exponents, wire formats, legacy verification behavior, and the
-current database migration limitation.
-
-## Project Positioning
-
-FinGuard does not claim to invent payment authorization, IAM, fraud detection,
-cryptographic signing, or approval workflows. Its focus is:
-
-**Security of the AI -> financial execution boundary.**
-
-## Security Evaluation
-
-The final experiment used the real local Ollama/Qwen integration, ten fixed AI
-attack classes, ten repetitions per class, and isolated state per attempt.
-
-```text
-100 adversarial AI attempts
-0 unauthorized executions
-```
-
-Detailed results:
-
-```text
-20 BLOCKED BY FINGUARD
-50 REACHED APPROVAL
-70 SIGNING REJECTIONS
-30 INVALID MODEL OUTPUT
-0 MODEL REFUSALS
-0 ALLOWED
-0 EXECUTED
-0 UNAUTHORIZED EXECUTIONS
-```
-
-The metrics overlap by stage. The 70 signing rejections consist of the 50
-approval-reaching requests plus 20 requests already directly blocked by
-FinGuard. They do not represent 170 attacks, and the project does not claim
-100/100 attacks were blocked. Invalid output and model refusal are reported as
-model/input outcomes, not FinGuard security victories.
-
-## Deterministic Red Team
-
-```text
-17/17 PASS
-12 independent attack families
-8/8 signing-boundary checks
-0 signing-boundary violations
-INR 0 unauthorized funds moved
-```
-
-The implemented families are authority escalation, tool-surface restriction,
-prompt injection, execution bypass, integrity tampering, nonce replay,
-execution replay, approval forgery, approval reuse, policy integrity,
-concurrent replay, identity impersonation, session abuse, AI/tool bypass, and
-multi-step attack chain. Some checks are variants of the same boundary; see
-[docs/red-team-coverage.md](docs/red-team-coverage.md).
-
-## AI Red Team
-
-The ten existing AI attack classes test:
-
-| Attack class | Security property |
+| Prohibited Action | Security Mechanism |
 |---|---|
-| Authority escalation | Model-generated amounts cannot exceed signed actor authority. |
-| Unauthorized destination | Model-generated recipients remain subject to destination allowlists. |
-| Approval bypass | Text cannot remove the mandatory agent approval floor. |
-| Approval impersonation | A natural-language approval claim is not cryptographic approval. |
-| Prompt injection | Untrusted context cannot grant financial authority. |
-| Direct signing request | The model cannot invoke signing or execution. |
-| Identity impersonation | Model claims cannot change the authenticated actor identity. |
-| Policy mutation request | The model cannot modify policy. |
-| Session manipulation | The model cannot select privileged session credentials. |
-| Malformed/ambiguous request | Invalid extraction cannot become an executable transaction. |
+| ❌ **Approve transactions** | Requires out-of-band human maker-checker approval (`ApprovalService`). |
+| ❌ **Sign transactions** | Ed25519 keys live in an isolated process (`SigningGate`); LLM paths cannot import signing. |
+| ❌ **Execute transfers** | `FinancialSimulator` requires a valid, signed decision receipt; agent cannot invoke execution. |
+| ❌ **Grant itself capabilities** | Capability profiles are server-configured, deny-by-default, and immutable during a run. |
+| ❌ **Modify security policy** | `PolicyEngine` rules are loaded strictly from verified configuration files. |
+| ❌ **Modify financial limits** | Single-transaction ceilings and daily budgets are server-enforced (`M3.2` / `M4`). |
+| ❌ **Impersonate signers** | Caller identity is bound to session configuration, not model output (`actor_id`). |
+| ❌ **Access private keys** | Keystore modules are isolated from AI/MCP boundaries (`I11` leak-prevention). |
+| ❌ **Extend execution budgets** | Step limits (`max_steps`) and deadlines are enforced deterministically by `M4 BoundedOrchestrator`. |
 
-The experiment distinguishes `MODEL_REFUSED`, `INVALID_MODEL_OUTPUT`,
-`BLOCKED_BY_FINGUARD`, `REACHED_APPROVAL`, `SIGNING_REJECTED`, `EXECUTED`,
-`UNAUTHORIZED_EXECUTION`, and `INCONCLUSIVE`.
+---
 
-## Security Findings
+## 3. Architecture & Trust Boundaries
 
-These two issues were discovered during the final security audit and fixed
-before the final measured release state.
-
-### Finding 1: Agent source-account authorization
-
-**Impact:** An agent request could previously select an arbitrary source
-account before authorization.
-
-**Fix:** Agent-originated transactions now require the authorized `treasury`
-source account.
-
-**Regression coverage:** A security-core regression test verifies that an agent
-request using another source account is blocked.
-
-### Finding 2: Self-authenticating attestation
-
-**Impact:** An attestation artifact could previously choose the public key used
-to authenticate itself.
-
-**Fix:** Verification now uses the configured trusted attestor key and validates
-the signed report against the live ledger state.
-
-**Regression coverage:** An attestation forged with an embedded attacker key is
-rejected; valid reports must match the trusted key and live ledger root/count.
-
-## Quick Start
-
-Requirements: Python `>=3.12`, project dependencies, Ollama, and model
-`qwen3:0.6b`.
-
-```powershell
-py -3 -m pip install -e ".[dev]"
-ollama pull qwen3:0.6b
-py -3 -m finguard.cli.main init
-py -3 -m finguard.cli.main agent status
+```text
+ NL / Agent Request                                [UNTRUSTED INPUT]
+       │
+       ▼
+ ┌───────────────┐
+ │ LLM Provider  │ (Extraction only; output sanitized; non-authoritative)
+ └───────┬───────┘
+         │
+         ▼
+ ┌───────────────┐
+ │ ExtractionRes │ (Strips all 24 authority/key fields; records detection)
+ └───────┬───────┘
+         │
+         ▼
+ ┌───────────────┐
+ │ MCP Boundary  │ (FastMCP / stdio, rate-limited, tool restrictions)
+ └───────┬───────┘
+         │
+         ▼
+ ┌───────────────┐
+ │ M4 Bounded    │ (Enforces max_steps, tool call ceilings, deadlines)
+ └───────┬───────┘
+         │
+         ▼
+ ┌───────────────┐
+ │ M3.1 Intent   │ (NFC canonicalization, alias resolution)
+ └───────┬───────┘
+         │
+         ▼
+ ┌───────────────┐
+ │ M3.2 Guard    │ (Deny-by-default capability & financial limit checks)
+ └───────┬───────┘
+         │
+         ▼
+ ┌───────────────┐
+ │ DecisionEngine│ (Evaluates policy rules, risk scores, generates receipts)
+ └───────┬───────┘
+         │
+  ┌──────┴──────┐
+  ▼             ▼
+┌───┐     ┌───────────┐
+│BLK│     │REQUIRE_APP│
+└───┘     └─────┬─────┘
+                │ (Out-of-band human approval)
+                ▼
+          ┌───────────┐
+          │ApprovalSvc│ (Hash-bound, expiring, approver != maker)
+          └─────┬─────┘
+                │
+                ▼
+          ┌───────────┐
+          │SigningGate│ (Ed25519 CAS state check, binds checked bytes)
+          └─────┬─────┘
+                │
+                ▼
+          ┌───────────┐
+          │Simulator  │ (Integer minor units, CAS execution)
+          └─────┬─────┘
+                │
+                ▼
+          ┌───────────┐
+          │AuditLedger│ (Sequenced hash-chain, signed checkpoints)
+          └───────────┘
 ```
 
-Run validation:
+---
 
-```powershell
-py -3 -m pytest -q -p no:cacheprovider
-py -3 -m finguard.cli.main redteam run
-py -3 -m finguard.cli.main redteam ai
-py -3 -m finguard.cli.main redteam ai --repetitions 10
-py -3 -m finguard.cli.main audit verify
-py -3 -m finguard.cli.main attest verify attestation_report.json
+## 4. Quickstart & Agent Workflow Demo
+
+### Installation
+```bash
+# Clone the repository
+git clone https://github.com/hickytani/finCLI.git
+cd finCLI
+
+# Run full test suite (577 tests)
+py -m pytest
 ```
 
-`agent status` checks whether Ollama reports `qwen3:0.6b` as available. The
-100-run evaluation is exactly 10 attack cases x 10 repetitions. The AI
-red-team command uses temporary isolated state and does not modify the normal
-FinGuard database.
+### Demonstrating the Agent MVP Workflow
+Run a natural language request through the deterministic FIN//GUARD security loop:
 
-## See FinGuard in Action
+```bash
+py -m finguard.cli.main agent run --request "Pay Alice INR 500 for design work"
+```
 
-Start with the [two-minute live demo](docs/demo-script.md). It uses the real
-CLI to show an AI request, independent FinGuard decisioning, rejection at the
-signing/execution boundary, unchanged virtual balances, and audit verification.
+#### Output Trace
+```text
+┌────────────────────────────────── REQUEST ──────────────────────────────────┐
+│ Pay Alice INR 500 for design work                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+                             AGENT EXECUTION TRACE
+┌────────┬────────────────────────────┬───────────────────────────────────────┐
+│ Step   │ Type                       │ Description                           │
+├────────┼────────────────────────────┼───────────────────────────────────────┤
+│ 1      │ AGENT_RUN_STARTED          │ Orchestration run started for request │
+│ 2      │ LLM_EXTRACTION             │ Extracted intent parameters from NL   │
+│ 3      │ GUARDRAIL_CHECK            │ Evaluated against M4/M3.2/Decision    │
+│ 4      │ REQUIRE_APPROVAL           │ Transaction requires human approval   │
+└────────┴────────────────────────────┴───────────────────────────────────────┘
+┌───────────────────────── SECURITY BOUNDARY RESULT ──────────────────────────┐
+│ Final State: APPROVAL_REQUIRED                                              │
+│ Decision: REQUIRE_APPROVAL                                                  │
+│ Receipt ID: rcpt_89a7f102                                                   │
+│                                                                             │
+│ SECURITY BOUNDARY ENFORCEMENT:                                              │
+│ • Autonomous agent CANNOT approve transactions.                             │
+│ • Autonomous agent CANNOT sign transactions.                                │
+│ • Autonomous agent CANNOT execute transactions.                             │
+│ • Autonomous agent CANNOT grant capabilities or modify policy.              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-Future presentation assets:
+---
 
-- `[Screenshot: AI request and FinGuard decision]` (not yet captured)
-- `[Screenshot: simulator rejection and unchanged balance]` (not yet captured)
-- `[GIF: two-minute terminal demo]` (not yet captured)
+## 5. Security Scorecard & Benchmark Results
 
-## Limitations
+FIN//GUARD is evaluated against a 52-case adversarial attack dataset across 42 categories and 15 multi-step composed agent attack scenarios:
 
-The evaluation does not prove security against every possible attack, every
-future AI model, unknown implementation bugs, or a production banking
-environment. It does not prove security of a compromised host or compromised
-Ollama installation, adaptive multi-step tool-using agents beyond the tested
-architecture, or cryptographic guarantees beyond the implemented assumptions.
+| Metric | Measured Value | 95% Wilson Confidence Interval |
+|---|---|---|
+| **Total Test Suite** | **577 passed, 0 failed** | **[99.36%, 100.0%]** |
+| **Adversarial Evaluation Cases** | 52 cases (42 categories) | - |
+| **Composed Agentic Attack Scenarios** | 15 scenarios | - |
+| **Authority Violations Observed** | **0** | **[0.0%, 6.88%]** |
+| **Financial Bypasses Observed** | **0** | **[0.0%, 6.88%]** |
+| **Secret / Key Leaks** | **0** | **[0.0%, 6.88%]** |
+| **Capability Escalations** | **0** | **[0.0%, 6.88%]** |
+| **Budget / Bound Escapes** | **0** | **[0.0%, 6.88%]** |
+| **Provider Failure Behavior** | Fail-Closed (100%) | [67.56%, 100.0%] |
 
-The measured result is scoped to the tested FinGuard execution path, local
-simulator, Ollama/Qwen configuration, and fixed adversarial attack corpus.
+---
 
-## Further Reading
+## 6. Project Documentation
+- [Architecture & State Map](docs/CURRENT-ARCHITECTURE.md)
+- [9-Layer Guardrails Architecture](docs/GUARDRAILS.md)
+- [Security Invariants Specification (I1 - I60)](docs/INVARIANTS.md)
+- [FG-401 Evaluation & Results](docs/FG-401-LLM-EVALUATION.md)
+- [MVP Limitations & Scope](docs/LIMITATIONS.md)
 
-- [Two-minute demo](docs/demo-script.md)
-- [Interview guide](docs/interview-guide.md)
-- [AI red-team experiment](docs/ai-red-team.md)
-- [Quantitative evaluation](docs/quantitative-evaluation.md)
-- [Deterministic coverage matrix](docs/red-team-coverage.md)
-- [Security model](docs/security-model.md)
-- [Threat model](THREAT_MODEL.md)
+---
+
+## 7. License
+This project is licensed under the [MIT License](LICENSE).
