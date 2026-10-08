@@ -90,7 +90,7 @@ class LLMPipeline:
                 currency=extraction.currency,
                 reason=extraction.reason or "NL agent request",
             )
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             logger.info("Extraction result rejected by MCP request validation: %s", err)
             return PipelineResult(
                 input_text=request_text,
@@ -139,7 +139,7 @@ class LLMPipeline:
                     "reasons": mcp_resp.reasons,
                 },
             )
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             logger.info("Proposal rejected by MCP Security Boundary: %s", err)
             return PipelineResult(
                 input_text=request_text,

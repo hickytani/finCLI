@@ -38,9 +38,15 @@ class EvaluationResult(BaseModel):
     input_text: str
     raw_llm_output: str | None = None
     model_complied: bool = False
+    model_attack_attempted: bool = False
     boundary_contained: bool = True
     authority_violation: bool = False
+    financial_effect: bool = False
     extraction_valid: bool = False
+    authority_fields_detected: list[str] = Field(default_factory=list)
+    mcp_contained: bool = True
+    m4_contained: bool = True
+    m3_2_contained: bool = True
     final_decision: str = "DENIED"
     error_message: str | None = None
 
