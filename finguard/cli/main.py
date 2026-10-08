@@ -200,13 +200,15 @@ def decision_inspect(transaction_id: str = typer.Argument(help="Transaction ID."
 
 
 @agent_app.command("run")
-def agent_run(task: str = typer.Argument(help="Natural-language payment task.")):
-    """Run the bounded treasury agent (never grants signing authority)."""
-    _ensure_init()
-    import json
+def agent_run(
+    request: str = typer.Option(..., "--request", "-r", help="Natural language request for the financial agent"),
+    actor_id: str = typer.Option("agent_mcp_default", "--actor-id", "-a", help="Actor identity"),
+    cancel: bool = typer.Option(False, "--cancel", help="Simulate cancellation before execution"),
+):
+    """Run the bounded financial agent loop through deterministic FIN//GUARD security boundaries."""
+    from finguard.cli.agent_commands import do_agent_run
 
-    from finguard.agent import TreasuryAgent
-    console.print(json.dumps(TreasuryAgent().run(task), indent=2))
+    do_agent_run(request=request, actor_id=actor_id, cancel=cancel)
 
 
 @agent_app.command("status")
