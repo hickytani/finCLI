@@ -542,18 +542,47 @@ def attack_suite():
 
 @redteam_app.command("run")
 def redteam_run(
-    repetitions: int = typer.Option(1, "--repetitions", min=1, help="Repeat each attack class."),
-):
-    """Run the measured red-team evaluation."""
-    _ensure_init()
-    from finguard.cli.attack_commands import do_redteam_run
-    do_redteam_run(repetitions)
+    scenario_id: str = typer.Argument(None, help="Scenario ID, e.g. M7-CAP-001"),
+    category: str = typer.Option(None, "--category", "-c", help="Attack category"),
+    all_scenarios: bool = typer.Option(False, "--all", help="Run all scenarios"),
+    actor_id: str = typer.Option("agent_mcp_default", "--actor"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Run M7 red-team scenarios against the real agent runtime."""
+    from finguard.cli.redteam_commands import run_command
+    run_command(
+        scenario_id=scenario_id,
+        category=category,
+        all_scenarios=all_scenarios,
+        actor_id=actor_id,
+        json_output=json_output,
+    )
+
+
+@redteam_app.command("list")
+def redteam_list(
+    adversarial_only: bool = typer.Option(False, "--adversarial"),
+    benign_only: bool = typer.Option(False, "--benign"),
+) -> None:
+    """List all available M7 red-team scenarios."""
+    from finguard.cli.redteam_commands import list_command
+    list_command(adversarial_only=adversarial_only, benign_only=benign_only)
+
+
+@redteam_app.command("report")
+def redteam_report(
+    output: str = typer.Option("docs/M7-RED-TEAM-REPORT.md", "--output", "-o"),
+    actor_id: str = typer.Option("agent_mcp_default", "--actor"),
+) -> None:
+    """Run all scenarios and generate docs/M7-RED-TEAM-REPORT.md."""
+    from finguard.cli.redteam_commands import report_command
+    report_command(output=output, actor_id=actor_id)
 
 
 @redteam_app.command("ai")
 def redteam_ai(
     repetitions: int = typer.Option(1, "--repetitions", min=1, help="Repeat each of the 10 AI attacks."),
-):
+) -> None:
     """Run malicious prompts through the real local AI request path."""
     from finguard.cli.attack_commands import do_redteam_ai
     do_redteam_ai(repetitions)
