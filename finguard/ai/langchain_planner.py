@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from typing import Any
 
 from finguard.ai.provider import _AUTHORITY_FIELDS, ExtractionResult
@@ -47,6 +48,10 @@ logger = logging.getLogger(__name__)
 
 # Hard cap on the raw LangChain output before we attempt JSON parsing.
 _MAX_CHAIN_OUTPUT_BYTES = 8_192
+
+
+class _DuplicateJSONField(ValueError):
+    """Reject ambiguous JSON objects instead of applying last-key-wins parsing."""
 
 # Static extraction prompt — user content goes ONLY into the human message.
 _SYSTEM_PROMPT = (
@@ -108,7 +113,11 @@ class LangChainPlanner:
         max_tokens: int = 512,
         retrieval_fn: Any | None = None,
     ) -> None:
-        self._chain = chain or self._build_default_chain(model_name, temperature, max_tokens)
+        self._chain = (
+            chain
+            if chain is not None
+            else self._build_default_chain(model_name, temperature, max_tokens)
+        )
         self._retrieval_fn = retrieval_fn
 
     # ─── LLMProvider protocol ─────────────────────────────────────────────
@@ -129,11 +138,11 @@ class LangChainPlanner:
 
         try:
             raw_output = self._invoke_chain(human_message)
-        except Exception as err:  # noqa: BLE001
-            logger.warning("LangChain chain invocation failed: %s", err)
+        except Exception:  # noqa: BLE001
+            logger.warning("LangChain extraction invocation failed")
             return ExtractionResult(
                 extraction_success=False,
-                error_message=f"LangChain chain error: {err}",
+                error_message="LangChain extraction invocation failed.",
             )
 
         return self._parse_chain_output(raw_output)
@@ -152,8 +161,8 @@ class LangChainPlanner:
                     parts.append(
                         _RETRIEVAL_WARNING.format(retrieved_context=retrieved.strip())
                     )
-            except Exception as err:  # noqa: BLE001
-                logger.warning("Retrieval function raised an exception: %s", err)
+            except Exception:  # noqa: BLE001
+                logger.warning("LangChain retrieval context is unavailable")
                 # Retrieval failure → proceed without context (fail-safe).
 
         return "\n\n".join(parts)
@@ -162,6 +171,9 @@ class LangChainPlanner:
         """Invoke the LangChain chain and return the raw string output."""
         result = self._chain.invoke({"system": _SYSTEM_PROMPT, "human": human_message})
 
+        if getattr(result, "tool_calls", None) or getattr(result, "invalid_tool_calls", None):
+            raise ValueError("Tool calls are not supported by the extraction boundary")
+
         # Handle both AIMessage objects and plain strings.
         if hasattr(result, "content"):
             raw = result.content
@@ -169,6 +181,9 @@ class LangChainPlanner:
             raw = result
         else:
             raw = str(result)
+
+        if not isinstance(raw, str):
+            raise TypeError("LangChain extraction output must be text")
 
         # Enforce output size bound before handing to JSON parser.
         raw_bytes = raw.encode("utf-8", errors="replace")
@@ -195,20 +210,23 @@ class LangChainPlanner:
             clean = clean.split("```")[1].split("```")[0].strip()
 
         try:
-            parsed = json.loads(clean)
-        except json.JSONDecodeError as err:
-            logger.warning("LangChain output is not valid JSON: %s | raw=%r", err, raw[:200])
+            parsed = json.loads(
+                clean,
+                object_pairs_hook=self._reject_duplicate_fields,
+                parse_constant=self._reject_nonfinite_constant,
+            )
+            self._reject_nonfinite_numbers(parsed)
+        except (json.JSONDecodeError, _DuplicateJSONField, ValueError, RecursionError):
+            logger.warning("LangChain output failed strict JSON validation")
             return ExtractionResult(
                 extraction_success=False,
-                error_message=f"LangChain output was not valid JSON: {err}",
-                raw_response=raw[:512],
+                error_message="LangChain output was not valid, unambiguous JSON.",
             )
 
         if not isinstance(parsed, dict):
             return ExtractionResult(
                 extraction_success=False,
                 error_message="LangChain output was not a JSON object.",
-                raw_response=raw[:512],
             )
 
         # G11: sanitize nested authority fields inside the metadata value.
@@ -216,19 +234,42 @@ class LangChainPlanner:
 
         try:
             # ExtractionResult validators strip top-level authority fields.
-            result = ExtractionResult(**parsed, raw_response=raw[:512])
+            result = ExtractionResult(**parsed)
             # Merge any nested authority fields we found into the detected list.
             if nested_detected:
                 merged = list(result.authority_fields_detected) + nested_detected
                 result = result.model_copy(update={"authority_fields_detected": merged})
             return result
-        except Exception as err:  # noqa: BLE001
-            logger.warning("ExtractionResult validation failed on LangChain output: %s", err)
+        except Exception:  # noqa: BLE001
+            logger.warning("LangChain extraction output failed schema validation")
             return ExtractionResult(
                 extraction_success=False,
-                error_message=f"Extraction validation error: {err}",
-                raw_response=raw[:512],
+                error_message="LangChain extraction output failed schema validation.",
             )
+
+    @staticmethod
+    def _reject_duplicate_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        parsed: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in parsed:
+                raise _DuplicateJSONField
+            parsed[key] = value
+        return parsed
+
+    @staticmethod
+    def _reject_nonfinite_constant(value: str) -> None:
+        raise ValueError(f"Non-finite JSON constant is not permitted: {value}")
+
+    @classmethod
+    def _reject_nonfinite_numbers(cls, value: Any) -> None:
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("Non-finite JSON numbers are not permitted")
+        if isinstance(value, dict):
+            for nested in value.values():
+                cls._reject_nonfinite_numbers(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                cls._reject_nonfinite_numbers(nested)
 
     @staticmethod
     def _sanitize_metadata(parsed: dict) -> list[str]:
@@ -237,18 +278,25 @@ class LangChainPlanner:
         Returns the list of detected nested keys so they can be recorded.
         This closes the G11 (nested injection) attack vector.
         """
-        metadata = parsed.get("metadata")
-        if not isinstance(metadata, dict):
-            return []
         detected: list[str] = []
-        keys_to_remove: list[str] = []
-        for key in list(metadata.keys()):
-            normalized = key.strip().lower().replace("-", "_").replace(" ", "_")
-            if normalized in _AUTHORITY_FIELDS:
-                keys_to_remove.append(key)
-                detected.append(f"metadata.{key}")
-        for key in keys_to_remove:
-            del metadata[key]
+
+        def sanitize(value: Any, path: str) -> None:
+            if isinstance(value, dict):
+                for key in list(value):
+                    normalized = key.strip().lower().replace("-", "_").replace(" ", "_")
+                    child_path = f"{path}.{key}" if path else key
+                    if normalized in _AUTHORITY_FIELDS:
+                        del value[key]
+                        detected.append(child_path)
+                    else:
+                        sanitize(value[key], child_path)
+            elif isinstance(value, list):
+                for index, nested in enumerate(value):
+                    sanitize(nested, f"{path}[{index}]")
+
+        metadata = parsed.get("metadata")
+        if isinstance(metadata, dict):
+            sanitize(metadata, "metadata")
         return detected
 
     # ─── Default chain builder ────────────────────────────────────────────

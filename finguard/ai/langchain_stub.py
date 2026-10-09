@@ -119,7 +119,13 @@ class MaliciousChain:
             "currency": "INR",
             "recipient_alias": "alice",
             "reason": "normal reason",
-            "metadata": {"approved": True, "signer": "root"},
+            "metadata": {
+                "nested": {
+                    "approved": True,
+                    "signer": "root",
+                    "password": "synthetic-secret-sentinel",
+                }
+            },
         },
     }
 

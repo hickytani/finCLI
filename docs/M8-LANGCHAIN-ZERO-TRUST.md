@@ -11,13 +11,14 @@
 The core thesis of FIN//GUARD is that the AI/LLM component is an **untrusted principal**.  
 M8 extends this thesis to LangChain:
 
-> All LangChain output — chain output, tool output, retrieved content, and memory — is treated as **untrusted data**.  
-> It enters the system through the same `ExtractionResult` boundary that governs every other LLM provider.  
-> The security enforcement path (`StructuredIntentBoundary → DecisionEngine → SigningGate`) is never touched by LangChain.
+> The adapter treats model output and retrieved text as **untrusted data** and validates extraction output through `ExtractionResult`.
+> The adapter itself does not call signing, approval, or execution services. The normal proposal path continues through the existing deterministic boundaries.
+
+This describes the adapter and the configured pipeline, not a Python sandbox. A caller-supplied LangChain `Runnable`, tool, callback, or retrieval function is executable host code. Do not give those components signing, approval, policy-mutation, or execution capabilities. The adapter cannot prevent a custom runnable from performing side effects internally.
 
 **Non-negotiable invariants:**
 - `LangChainPlanner` implements `LLMProvider` — a *proposal* interface, never an *authority* interface.
-- LangChain is an **optional** dependency (`pip install finguard[langchain]`). The rest of the package is fully importable without it.
+- LangChain is an **optional** dependency (`pip install finguard[langchain]`). The deterministic core imports tested in M8.1 do not require it; see the verification report for scope.
 - No second policy engine, no parallel ledger, no alternative approval mechanism.
 
 ---
@@ -31,7 +32,7 @@ Natural Language Request
 LangChainPlanner.extract_transaction()
   ├── _build_human_message()         ← static system prompt; retrieved content tagged [UNTRUSTED]
   ├── chain.invoke()                 ← LangChain Runnable (ChatOpenAI, local Ollama, etc.)
-  ├── _invoke_chain()                ← output size-bounded to 8 192 bytes
+  ├── _invoke_chain()                 ← returned text bounded to 8 192 bytes
   └── _parse_chain_output()          ← JSON parse → ExtractionResult (strips authority fields)
         │
         ▼
@@ -53,7 +54,7 @@ BoundedOrchestrator (M4) → StructuredIntentBoundary (M3.1) → AgentGuardrails
 DecisionEngine → [BLOCKED | REQUIRE_APPROVAL]
 ```
 
-LangChain **stops** at `ExtractionResult`. It never reaches the signing gate.
+The adapter returns only an `ExtractionResult`; the tested pipeline sends valid proposals through the configured MCP and deterministic intent/guardrail path. The adapter does not call the signing gate. This does not sandbox arbitrary code supplied as a runnable, tool, callback, or retrieval function.
 
 ---
 
@@ -84,7 +85,7 @@ _SYSTEM_PROMPT = (
 
 ### 4.2 Output Size Bound
 
-Before any JSON parsing, the chain output is bounded to `_MAX_CHAIN_OUTPUT_BYTES = 8 192`. Any larger output raises a `ValueError` → `ExtractionResult(extraction_success=False)`.
+After `chain.invoke()` returns, textual output is bounded to `_MAX_CHAIN_OUTPUT_BYTES = 8 192` before JSON parsing. Any larger output fails extraction. This is an output/parser bound only: it does not limit request or retrieved-context size, model-side work, runnable execution time, or side effects performed before the result is returned.
 
 ### 4.3 ExtractionResult Validation
 
@@ -96,11 +97,11 @@ Every chain output goes through `ExtractionResult.model_validate()`:
 
 ### 4.4 Retrieved Content Isolation
 
-When `retrieval_fn` is provided, the retrieved text is appended to the human message with explicit `[UNTRUSTED RETRIEVED CONTEXT]` / `[END UNTRUSTED CONTEXT]` markers. The retrieved content is **never** injected into the system role. If `retrieval_fn` raises, extraction proceeds without context (fail-safe).
+When `retrieval_fn` is provided, returned text is appended to the human message with explicit `[UNTRUSTED RETRIEVED CONTEXT]` / `[END UNTRUSTED CONTEXT]` markers. The adapter does not put it in the separate system string supplied to the runnable. This marker is defense in depth, not a security boundary. If `retrieval_fn` raises, extraction proceeds without retrieved context; the normal deterministic authorization path still applies.
 
 ### 4.5 Fail-Closed on Exception
 
-Any exception from LangChain (network error, timeout, bad output, import error) produces `ExtractionResult(extraction_success=False)`. This propagates as `final_decision="EXTRACTION_FAILED"` in the pipeline — never as an authorized action.
+An exception raised while invoking the runnable, or an invalid response, produces `ExtractionResult(extraction_success=False)`. The adapter does not impose a timeout or cancellation policy: a runnable that never returns can block, and retry behavior is controlled by the supplied runnable. A caller may configure retries, but arbitrary runnable side effects cannot be made exactly-once by this adapter.
 
 ---
 
@@ -117,7 +118,7 @@ Any exception from LangChain (network error, timeout, bad output, import error) 
 | G7 | Zero amount | `"0.00"` | `extraction_success=False` |
 | G8 | Float amount | Python `float` (500.0) | `extraction_success=False` |
 | G9 | Very-long reason | 10 000-char reason | `extraction_success=False` |
-| G10 | Duplicate JSON keys | `"amount"` appears twice | Handled safely; no authority |
+| G10 | Duplicate JSON keys | `"amount"` appears twice | Rejected as ambiguous JSON |
 | G11 | Nested authority fields | `metadata: {approved: True}` | Extra field stripped/blocked |
 | G12 | Retrieval / RAG injection | Retrieved text contains injection | Authority fields stripped; retrieval error → fail-safe |
 | G13 | Memory-based multi-turn escalation | Turn 2 injects `authorized=True` | Stripped on every turn |
@@ -169,24 +170,24 @@ pipeline = LLMPipeline(provider=planner)
 
 ---
 
-## 7. Security Properties Preserved
+## 7. Security Properties and Verification Scope
 
 M8 does **not** change or weaken any existing security property:
 
 | Property | M8 impact |
 |---|---|
-| LLM output is untrusted | ✅ Preserved — LangChain output goes through `ExtractionResult` |
-| MCP cannot authorize | ✅ Preserved — `MCPSecurityBoundary` unchanged |
-| SigningGate re-validates | ✅ Preserved — never imported by this module |
-| Ledger is append-only | ✅ Preserved — not touched |
-| M4 orchestration bounds | ✅ Preserved — `BoundedOrchestrator` config unchanged |
-| Fail-closed on exception | ✅ Preserved — any LangChain error → `extraction_success=False` |
+| LangChain output is untrusted | Validated by the adapter before it is returned |
+| Proposal authorization | The normal pipeline routes proposals through the existing MCP/intent/guardrail path |
+| Signing/approval/execution | Not invoked by the adapter; not exercised as part of M8.1 proposal tests |
+| Ledger and orchestration | Existing components remain downstream; this adapter does not replace them |
+| Invalid output / invocation exception | Returns a failed extraction without forwarding a proposal |
+| Timeout, cancellation, arbitrary runnable side effects | Not controlled or sandboxed by this adapter |
 
 ---
 
 ## 8. What LangChain Cannot Do
 
-By construction (structural enforcement, not prompting):
+For the adapter and tested proposal path:
 
 - ❌ Cannot sign a transaction
 - ❌ Cannot approve a transaction
@@ -194,14 +195,19 @@ By construction (structural enforcement, not prompting):
 - ❌ Cannot bypass `AgentGuardrails`
 - ❌ Cannot set `actor_id`, `session_id`, or `nonce`
 - ❌ Cannot override `BoundedOrchestrator` limits
-- ❌ Cannot inject retrieved content into the system role
+- ❌ The adapter does not place retrieved content in its separate system string
 - ❌ Cannot grant capabilities
+
+These statements do not apply to arbitrary code inside caller-supplied runnables, tools, callbacks, or retrieval functions. The project does not sandbox Python code.
 
 ---
 
 ## 9. Limitations and Future Work
 
-- The real-world Ollama + LangChain integration requires `langchain-ollama`; the test suite uses offline stubs.
+- M8.1 exercised `langchain-core`'s real `RunnableLambda` interface with deterministic fake model functions. No live model/provider integration was run. `langchain-openai` and `langchain-ollama` are not required for these tests.
 - LangChain memory backends are not tested against a real vector store — `MemoryEscalationChain` simulates the attack pattern deterministically.
-- LangChain tool-use / function-calling mode is not yet integrated; if added, each tool must be explicitly allowlisted and sandboxed.
+- The adapter rejects returned messages carrying tool-call metadata, but does not prevent a tool-bound runnable or callback from executing tools before returning. Tool-use/function-calling is not an authorized integration mode.
+- The adapter has no generic timeout/cancellation, request-size, or retrieved-context-size enforcement. Any host using untrusted runnables must isolate them and provide only least-privilege capabilities.
 - Comparison with NeMo Guardrails / LLM Guard is deferred to M5 (FG-601).
+
+See [M8.1 audit](./M8.1-AUDIT.md) and [M8.1 verification report](./M8.1-VERIFICATION-REPORT.md) for observed evidence and limits.
