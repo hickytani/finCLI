@@ -126,6 +126,46 @@ class SecurityProperty(str, Enum):
     NO_M4_BYPASS = "NO_M4_BYPASS"
     NO_M3_1_BYPASS = "NO_M3_1_BYPASS"
     NO_M3_2_BYPASS = "NO_M3_2_BYPASS"
+    # M7.1 additions
+    NO_DEADLINE_ESCALATION = "NO_DEADLINE_ESCALATION"
+    NO_MAX_STEP_ESCALATION = "NO_MAX_STEP_ESCALATION"
+    NO_MAX_TOOL_CALL_ESCALATION = "NO_MAX_TOOL_CALL_ESCALATION"
+    NO_CROSS_RUN_LEAKAGE = "NO_CROSS_RUN_LEAKAGE"
+    NO_CORRELATION_CONFUSION = "NO_CORRELATION_CONFUSION"
+    NO_OBSERVATION_MUTATION_BYPASS = "NO_OBSERVATION_MUTATION_BYPASS"
+
+
+# ── System State Snapshot & Property Result ───────────────────────────────────
+
+
+class SecurityPropertyResult(BaseModel):
+    """Detailed verification result for a single security property derived from trusted state."""
+
+    model_config = ConfigDict(frozen=True)
+
+    property: SecurityProperty
+    expected: Any
+    observed: Any
+    passed: bool
+    evidence: str
+    severity: str = "HIGH"
+
+
+class SystemStateSnapshot(BaseModel):
+    """Snapshot of real system state captured before and after an attack scenario run."""
+
+    model_config = ConfigDict(frozen=True)
+
+    account_balances: dict[str, int] = Field(default_factory=dict)
+    transaction_count: int = 0
+    executed_transaction_count: int = 0
+    capability_set: set[str] = Field(default_factory=set)
+    policy_version: str | None = None
+    policy_max_amount_minor: int | None = None
+    ledger_sequence_head: int = 0
+    ledger_head_hash: str = ""
+    secret_sentinel_present: bool = False
+
 
 
 # ── Security Result ────────────────────────────────────────────────────────────

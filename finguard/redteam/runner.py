@@ -32,9 +32,10 @@ from finguard.redteam.models import (
     AttackCategory,
     AttackMode,
     AttackScenario,
+    SecurityPropertyResult,
     SecurityResult,
 )
-from finguard.redteam.oracle import OracleEvidence, SecurityOracle
+from finguard.redteam.oracle import OracleEvidence, SecurityOracle, StateSnapshotCollector
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,7 @@ class EvaluationResult:
 
     # Trace
     trace: list[TraceEvent]
+    property_results: list[SecurityPropertyResult] = field(default_factory=list)
 
     # Pass/fail shorthand
     @property
@@ -299,6 +301,9 @@ class RedTeamRunner:
         session = MCPSession(session_id=f"rt_sess_{uuid.uuid4().hex[:8]}")
         mcp_boundary = MCPSecurityBoundary(actor_id=self.actor_id, session=session)
 
+        # ── Capture state snapshot BEFORE run ──────────────────────────────────
+        state_before = StateSnapshotCollector.capture(actor_id=self.actor_id, capability_profile=self.profile)
+
         # ── Run the orchestration loop ────────────────────────────────────────
         loop = AgentOrchestratorLoop(
             provider=provider,
@@ -309,7 +314,7 @@ class RedTeamRunner:
 
         # Determine cancellation (benign cancel scenarios)
         cancellation = scenario.category == AttackCategory.CANCELLATION_BYPASS or (
-            scenario.scenario_id in {"M7-STATE-002", "M7-BEN-003"}
+            scenario.scenario_id in {"M7-STATE-002", "M7-STATE-003", "M7-BEN-003"}
             and scenario.attack_mode in {AttackMode.BENIGN, AttackMode.MODEL_COMPROMISED}
         )
 
@@ -321,8 +326,8 @@ class RedTeamRunner:
                 cancellation_requested=cancellation,
             )
             run_success = True
-        except Exception as exc:
-            logger.warning("[runner] scenario %s raised: %s", scenario.scenario_id, exc, exc_info=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[runner] scenario %s raised: %s", scenario.scenario_id, exc)
             agent_result = AgentRunResult(
                 run_id=run_id,
                 request_id="none",
@@ -338,6 +343,9 @@ class RedTeamRunner:
             )
             run_success = False
 
+        # ── Capture state snapshot AFTER run ───────────────────────────────────
+        state_after = StateSnapshotCollector.capture(actor_id=self.actor_id, capability_profile=self.profile)
+
         emit("AGENT_RESULT", "AgentOrchestratorLoop", "SAFE",
              f"Agent result: {agent_result.final_state} / {agent_result.final_decision}",
              final_state=agent_result.final_state,
@@ -352,7 +360,7 @@ class RedTeamRunner:
                  fields=agent_result.authority_fields_detected)
 
         # ── Build oracle evidence ─────────────────────────────────────────────
-        evidence = self._build_evidence(scenario, agent_result, run_success)
+        evidence = self._build_evidence(scenario, agent_result, run_success, state_before=state_before, state_after=state_after)
 
         # ── Oracle verdict ────────────────────────────────────────────────────
         result, violations, verified = SecurityOracle.evaluate(
@@ -387,6 +395,7 @@ class RedTeamRunner:
             security_result=result,
             violations_found=violations,
             properties_verified=verified,
+            property_results=evidence.property_results,
             agent_final_state=agent_result.final_state,
             agent_final_decision=agent_result.final_decision,
             authority_violation_attempted=agent_result.authority_violation_attempted,
@@ -447,9 +456,11 @@ class RedTeamRunner:
         scenario: AttackScenario,
         agent_result: AgentRunResult,
         run_success: bool,
+        state_before: Any = None,
+        state_after: Any = None,
     ) -> OracleEvidence:
         """Collect oracle evidence from trusted state (not agent claims)."""
-        ev = OracleEvidence()
+        ev = OracleEvidence(state_before=state_before, state_after=state_after)
 
         # From run result
         ev.final_state = agent_result.final_state
