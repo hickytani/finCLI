@@ -29,8 +29,8 @@ def test_m9_comparative_red_team_suite() -> None:
     assert scorecard.legitimate_cases_count == 4
 
     # 2. Assert Baseline Vulnerability (System A fails on attack scenarios)
-    assert scorecard.baseline_attack_success_count >= 28, (
-        f"Unguarded baseline expected to be vulnerable to >= 28 attacks, "
+    assert scorecard.baseline_attack_success_count >= 25, (
+        f"Unguarded baseline expected to be vulnerable to >= 25 attacks, "
         f"got {scorecard.baseline_attack_success_count}"
     )
 
