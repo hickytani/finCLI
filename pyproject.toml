@@ -40,6 +40,10 @@ api = [
 mcp = [
     "mcp>=1.0.0",
 ]
+langchain = [
+    "langchain-core>=0.2.0",
+    "langchain-openai>=0.1.0",
+]
 
 [project.scripts]
 finguard = "finguard.cli.main:app"
