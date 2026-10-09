@@ -20,6 +20,7 @@ from finguard.core.enums import ActorType, DecisionType, TransactionState
 from finguard.core.state_machine import TransactionStateMachine
 from finguard.core.transaction import Transaction
 from finguard.crypto.hashing import sha256_hash
+from finguard.identity.account_registry import AccountRegistry, ResolutionStatus
 from finguard.identity.registry import IdentityRegistry
 from finguard.policy.engine import PolicyEngine
 from finguard.risk.engine import RiskEngine
@@ -78,9 +79,15 @@ class DecisionResult(BaseModel):
 class DecisionEngine:
     """Evaluates and persists a transaction once, with a receipt and audit evidence."""
 
-    def __init__(self, registry: IdentityRegistry | None = None, policy_engine: PolicyEngine | None = None):
+    def __init__(
+        self,
+        registry: IdentityRegistry | None = None,
+        policy_engine: PolicyEngine | None = None,
+        account_registry: AccountRegistry | None = None,
+    ):
         self.registry = registry or IdentityRegistry()
         self.policy_engine = policy_engine or PolicyEngine()
+        self.account_registry = account_registry or AccountRegistry()
 
     @staticmethod
     def _decision_checkpoint(stage: str) -> None:
@@ -145,6 +152,15 @@ class DecisionEngine:
             if actor.session_binding_required and not transaction.session_id:
                 raise ValueError("Session binding is required for this identity")
 
+            # Account Registry & Alias Resolution
+            source_res = self.account_registry.resolve_account(transaction.from_account)
+            dest_res = self.account_registry.resolve_account(transaction.to_account)
+
+            if source_res.status == ResolutionStatus.CONFUSABLE_REJECTED:
+                raise ValueError(f"Confusable or zero-width characters in from_account: {source_res.reason}")
+            if dest_res.status == ResolutionStatus.CONFUSABLE_REJECTED:
+                raise ValueError(f"Confusable or zero-width characters in to_account: {dest_res.reason}")
+
             policy_hash = sha256_hash(canonical_serialize(self.policy_engine.policy.model_dump(mode="json")))
             from finguard.money import Money
             _authority_currency = actor.authority_currency
@@ -155,12 +171,21 @@ class DecisionEngine:
             destination_wildcard = "*" in actor.allowed_destinations
             explicit_sources = [account for account in actor.allowed_source_accounts if account != "*"]
             explicit_destinations = [account for account in actor.allowed_destinations if account != "*"]
+
+            source_account_keys = {transaction.from_account}
+            if source_res.account_id:
+                source_account_keys.add(source_res.account_id)
+
+            dest_account_keys = {transaction.to_account}
+            if dest_res.account_id:
+                dest_account_keys.add(dest_res.account_id)
+
             source_allowed = bool(actor.allowed_source_accounts) and (
-                transaction.from_account in explicit_sources
+                bool(source_account_keys & set(explicit_sources))
                 or (source_wildcard and actor.actor_type != ActorType.AGENT)
             )
             destination_allowed = bool(actor.allowed_destinations) and (
-                transaction.to_account in explicit_destinations
+                bool(dest_account_keys & set(explicit_destinations))
                 or (destination_wildcard and actor.actor_type != ActorType.AGENT)
             )
             authority_allowed = (
