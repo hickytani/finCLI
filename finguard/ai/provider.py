@@ -53,6 +53,12 @@ _AUTHORITY_FIELDS: frozenset[str] = frozenset(
         "signing_key",
         "approve",
         "sign",
+        "max_prompt_bytes",
+        "max_retrieved_context_bytes",
+        "max_response_bytes",
+        "timeout",
+        "timeout_seconds",
+        "max_retries",
     }
 )
 

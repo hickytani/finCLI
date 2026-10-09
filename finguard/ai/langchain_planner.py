@@ -37,6 +37,7 @@ Zero-trust rules enforced here
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import math
@@ -46,7 +47,7 @@ from finguard.ai.provider import _AUTHORITY_FIELDS, ExtractionResult
 
 logger = logging.getLogger(__name__)
 
-# Hard cap on the raw LangChain output before we attempt JSON parsing.
+# Default hard cap on raw LangChain output before JSON parsing.
 _MAX_CHAIN_OUTPUT_BYTES = 8_192
 
 
@@ -84,9 +85,19 @@ class LangChainPlanner:
     model_name:
         Model name passed to the internal ChatOpenAI chain builder.
     temperature:
-        Sampling temperature.  Defaults to 0 (deterministic).
+        Sampling temperature. Defaults to 0 (deterministic).
     max_tokens:
         Maximum number of tokens in the model response.
+    max_prompt_bytes:
+        Maximum permitted user request length in bytes.
+    max_retrieved_context_bytes:
+        Maximum permitted retrieved context length in bytes.
+    max_response_bytes:
+        Maximum permitted serialized model response length in bytes.
+    timeout:
+        Wall-clock deadline for invocation in seconds.
+    max_retries:
+        Maximum permitted model invocation retries (0 to 3).
     """
 
     def __init__(
@@ -95,12 +106,41 @@ class LangChainPlanner:
         model_name: str = "gpt-3.5-turbo",
         temperature: float = 0.0,
         max_tokens: int = 512,
+        max_prompt_bytes: int = 4_096,
+        max_retrieved_context_bytes: int = 8_192,
+        max_response_bytes: int = 8_192,
+        timeout: float = 10.0,
+        max_retries: int = 0,
     ) -> None:
+        if max_prompt_bytes <= 0:
+            raise ValueError("max_prompt_bytes must be positive")
+        if max_retrieved_context_bytes <= 0:
+            raise ValueError("max_retrieved_context_bytes must be positive")
+        if max_response_bytes <= 0:
+            raise ValueError("max_response_bytes must be positive")
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        if max_retries < 0 or max_retries > 3:
+            raise ValueError("max_retries must be between 0 and 3")
+
+        self.model_name = model_name
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.max_prompt_bytes = int(max_prompt_bytes)
+        self.max_retrieved_context_bytes = int(max_retrieved_context_bytes)
+        self.max_response_bytes = int(max_response_bytes)
+        self.timeout = float(timeout)
+        self.max_retries = int(max_retries)
         self._chain = self._build_default_chain(model_name, temperature, max_tokens)
 
     # ─── LLMProvider protocol ─────────────────────────────────────────────
 
-    def extract_transaction(self, request_text: str) -> ExtractionResult:
+    def extract_transaction(
+        self,
+        request_text: str,
+        *,
+        retrieved_context: str | None = None,
+    ) -> ExtractionResult:
         """Extract transaction intent from *request_text* via LangChain.
 
         All output from the chain is treated as untrusted and validated
@@ -112,18 +152,66 @@ class LangChainPlanner:
                 error_message="LangChainPlanner requires a string request.",
             )
 
-        try:
-            raw_output = self._invoke_chain(request_text)
-        except Exception:  # noqa: BLE001
-            logger.warning("LangChain extraction invocation failed")
+        prompt_bytes = request_text.encode("utf-8", errors="replace")
+        if len(prompt_bytes) > self.max_prompt_bytes:
             return ExtractionResult(
                 extraction_success=False,
-                error_message="LangChain extraction invocation failed.",
+                error_message=(
+                    f"Prompt length ({len(prompt_bytes)} bytes) exceeds "
+                    f"maximum configured bound of {self.max_prompt_bytes} bytes."
+                ),
             )
 
-        return self._parse_chain_output(raw_output)
+        if retrieved_context is not None:
+            if not isinstance(retrieved_context, str):
+                return ExtractionResult(
+                    extraction_success=False,
+                    error_message="LangChainPlanner requires a string retrieved context.",
+                )
+            ctx_bytes = retrieved_context.encode("utf-8", errors="replace")
+            if len(ctx_bytes) > self.max_retrieved_context_bytes:
+                return ExtractionResult(
+                    extraction_success=False,
+                    error_message=(
+                        f"Retrieved context length ({len(ctx_bytes)} bytes) exceeds "
+                        f"maximum configured bound of {self.max_retrieved_context_bytes} bytes."
+                    ),
+                )
+            human_message = f"{request_text}\n\n[UNTRUSTED RETRIEVED CONTEXT]\n{retrieved_context}"
+        else:
+            human_message = request_text
+
+        attempts = 0
+        max_attempts = 1 + self.max_retries
+        last_error = "LangChain extraction invocation failed."
+
+        while attempts < max_attempts:
+            attempts += 1
+            try:
+                raw_output = self._invoke_chain_with_timeout(human_message)
+                return self._parse_chain_output(raw_output)
+            except TimeoutError:
+                logger.warning("LangChain extraction timed out on attempt %d/%d", attempts, max_attempts)
+                last_error = f"LangChain extraction timed out after {self.timeout} seconds."
+            except Exception:  # noqa: BLE001
+                logger.warning("LangChain extraction invocation failed on attempt %d/%d", attempts, max_attempts)
+                last_error = "LangChain extraction invocation failed."
+
+        return ExtractionResult(
+            extraction_success=False,
+            error_message=last_error,
+        )
 
     # ─── Internal helpers ─────────────────────────────────────────────────
+
+    def _invoke_chain_with_timeout(self, human_message: str) -> str:
+        """Invoke internal chain with deadline enforcement using a worker thread."""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self._invoke_chain, human_message)
+            try:
+                return future.result(timeout=self.timeout)
+            except concurrent.futures.TimeoutError as err:
+                raise TimeoutError(f"Chain execution timed out after {self.timeout} seconds") from err
 
     def _invoke_chain(self, human_message: str) -> str:
         """Invoke the LangChain chain and return the raw string output."""
@@ -145,9 +233,9 @@ class LangChainPlanner:
 
         # Enforce output size bound before handing to JSON parser.
         raw_bytes = raw.encode("utf-8", errors="replace")
-        if len(raw_bytes) > _MAX_CHAIN_OUTPUT_BYTES:
+        if len(raw_bytes) > self.max_response_bytes:
             raise ValueError(
-                f"LangChain output exceeds {_MAX_CHAIN_OUTPUT_BYTES} bytes "
+                f"LangChain output exceeds {self.max_response_bytes} bytes "
                 f"({len(raw_bytes)} received) — possible injection or runaway output."
             )
         return raw
