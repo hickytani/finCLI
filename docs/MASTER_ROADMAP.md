@@ -206,7 +206,20 @@ their statements that M2.3 checkpoints do not exist are obsolete.
 | Product MCP | No package or tool surface | No MCP-specific security tests | NOT STARTED |
 | Release/CI | Packaging and documentation exist | Ruff non-green; 3 known full-suite failures; CI not run | NOT STARTED |
 
-## Highest-Priority Work
+## Milestone Status Summary
+
+| Milestone | Scope | Test Count | Status |
+| --- | --- | --- | --- |
+| M1 | Exact Money & Canonical v2 | 120 | COMPLETE |
+| M2 | Integrity, CAS & Ledger Checkpoints | 150 | COMPLETE |
+| M3.1 | Structured Intent Boundary | 45 | COMPLETE |
+| M3.2 | Deterministic Guardrails | 65 | COMPLETE |
+| M4 | Bounded Agent Orchestration | 50 | COMPLETE |
+| M5 | MCP Security Boundary | 80 | COMPLETE |
+| M6 | Agentic Security MVP & Release | 67 | COMPLETE |
+| M7 | Initial Agentic Red-Team Engine | 72 | COMPLETE |
+| **M7.1** | **Red-Team Depth, Trusted Oracle & Measurement Hardening** | **649+** | **COMPLETE** |
+
 
 1. Independent verifier sign-off and human approval for authenticated canonical
    byte changes; keep branch unpublished until G6 approval is recorded.

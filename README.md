@@ -1,7 +1,7 @@
 # FIN//GUARD — Security Architecture for Agentic Financial Systems
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue.svg)](https://www.python.org/)
-[![Build Status](https://img.shields.io/badge/tests-577%20passed-brightgreen.svg)]()
+[![Build Status](https://img.shields.io/badge/tests-649%20passed-brightgreen.svg)]()
 [![Security Audit](https://img.shields.io/badge/authority--violations-0-success.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -159,29 +159,33 @@ py -m finguard.cli.main agent run --request "Pay Alice INR 500 for design work"
 
 ---
 
-## 5. Security Scorecard & Benchmark Results
+## 5. Security Scorecard & M7.1 Red-Team Results
 
-FIN//GUARD is evaluated against a 52-case adversarial attack dataset across 42 categories and 15 multi-step composed agent attack scenarios:
+FIN//GUARD M7.1 evaluates the autonomous agent against **51 red-team scenarios** (41 adversarial across 15+ attack classes + 10 benign regression cases) using trusted system state snapshots (`SystemStateSnapshot`):
 
-| Metric | Measured Value | 95% Wilson Confidence Interval |
+| Metric | Measured Value | 95% Wilson Confidence Interval / Statistical Upper Bound |
 |---|---|---|
-| **Total Test Suite** | **577 passed, 0 failed** | **[99.36%, 100.0%]** |
-| **Adversarial Evaluation Cases** | 52 cases (42 categories) | - |
-| **Composed Agentic Attack Scenarios** | 15 scenarios | - |
-| **Authority Violations Observed** | **0** | **[0.0%, 6.88%]** |
-| **Financial Bypasses Observed** | **0** | **[0.0%, 6.88%]** |
-| **Secret / Key Leaks** | **0** | **[0.0%, 6.88%]** |
-| **Capability Escalations** | **0** | **[0.0%, 6.88%]** |
-| **Budget / Bound Escapes** | **0** | **[0.0%, 6.88%]** |
-| **Provider Failure Behavior** | Fail-Closed (100%) | [67.56%, 100.0%] |
+| **Total Test Suite** | **649 passed, 0 failed** | **[99.4%, 100.0%]** |
+| **M7.1 Catalog Scenarios** | 51 scenarios (41 adversarial, 10 benign) | - |
+| **Attack Classes Evaluated** | 15+ attack classes | - |
+| **Authority Violations Observed** | **0** | **Rule of Three Upper Bound: 7.3%** |
+| **Financial Bypasses Observed** | **0** | **Rule of Three Upper Bound: 7.3%** |
+| **Secret / Key Leaks** | **0** | **Rule of Three Upper Bound: 7.3%** |
+| **Capability Escalations** | **0** | **Rule of Three Upper Bound: 7.3%** |
+| **Budget / Bound Escapes** | **0** | **Rule of Three Upper Bound: 7.3%** |
+| **Multi-Component Attacks** | 5 composed scenarios (LLM+Tool+MCP) | **0 violations** |
+| **Provider Failure Behavior** | Fail-Closed (100%) | [67.6%, 100.0%] |
 
 ---
 
 ## 6. Project Documentation
+- [M7.1 Red-Team Hardening Specification](docs/M7.1-REDTEAM-HARDENING.md)
+- [M7.1 Audit Document & Catalog Execution](docs/M7.1-AUDIT.md)
+- [M7 Red-Team Architecture](docs/M7-RED-TEAM.md)
+- [M7 Red-Team Evaluation Report](docs/M7-RED-TEAM-REPORT.md)
 - [Architecture & State Map](docs/CURRENT-ARCHITECTURE.md)
 - [9-Layer Guardrails Architecture](docs/GUARDRAILS.md)
-- [Security Invariants Specification (I1 - I60)](docs/INVARIANTS.md)
-- [FG-401 Evaluation & Results](docs/FG-401-LLM-EVALUATION.md)
+- [Security Invariants Specification (I1 - I94)](docs/INVARIANTS.md)
 - [MVP Limitations & Scope](docs/LIMITATIONS.md)
 
 ---

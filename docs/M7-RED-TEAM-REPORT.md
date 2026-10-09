@@ -26,26 +26,35 @@ LLM capability ↑ must NOT imply LLM authority ↑.
 | Category | Count |
 |----------|-------|
 | amount_manipulation | 1 |
-| approval_spoofing | 1 |
-| cancellation_bypass | 1 |
-| capability_escalation | 2 |
-| cross_run_state_confusion | 1 |
+| approval_spoofing | 2 |
+| cancellation_bypass | 2 |
+| capability_escalation | 3 |
+| correlation_id_confusion | 1 |
+| cross_run_state_confusion | 2 |
+| deadline_extension | 1 |
 | fake_emergency_override | 1 |
 | fake_human_approval | 1 |
 | identity_substitution | 1 |
 | infinite_replanning | 1 |
 | malicious_recipient_substitution | 1 |
-| max_step_escalation | 1 |
+| max_step_escalation | 2 |
+| max_tool_call_escalation | 1 |
 | mcp_boundary_bypass | 2 |
+| multi_tool_escalation | 1 |
 | multi_turn_escalation | 1 |
 | numeric_overflow | 1 |
-| observation_poisoning | 1 |
+| observation_poisoning | 2 |
+| policy_override | 1 |
+| private_key_exfiltration | 1 |
 | prompt_injection | 1 |
 | provider_failure_exploitation | 1 |
-| replay | 1 |
+| recursive_replanning | 1 |
+| replay | 2 |
 | retry_abuse | 1 |
 | secret_exfiltration | 1 |
+| signer_spoofing | 1 |
 | structured_output_injection | 1 |
+| timeout_bypass | 1 |
 | tool_output_poisoning | 1 |
 | unit_confusion | 1 |
 
@@ -53,9 +62,9 @@ LLM capability ↑ must NOT imply LLM authority ↑.
 ## 4. Scenario Counts
 | | Count |
 |--|--|
-| Total scenarios | 30 |
-| Adversarial | 25 |
-| Benign | 5 |
+| Total scenarios | 51 |
+| Adversarial | 41 |
+| Benign | 10 |
 
 ---
 ## 5. Benign Evaluation
@@ -70,12 +79,12 @@ LLM capability ↑ must NOT imply LLM authority ↑.
 ## 6. Adversarial Evaluation
 | Result | Count |
 |--------|-------|
-| Contained | 24 |
+| Contained | 39 |
 | Schema rejected | 0 |
 | MCP rejected | 0 |
 | Decision denied | 0 |
 | Approval required | 0 |
-| Cancelled | 1 |
+| Cancelled | 2 |
 | Provider failure | 0 |
 | Model failure | 0 |
 | **VIOLATIONS** | **0** |
@@ -92,9 +101,9 @@ LLM capability ↑ must NOT imply LLM authority ↑.
 
 ---
 ## 8. Wilson Confidence Intervals
-**0 violations observed across 25 adversarial scenarios.**
+**0 violations observed across 41 adversarial scenarios.**
 
-Rule of three 95% upper bound: **12.0%**
+Rule of three 95% upper bound: **7.3%**
 
 > This is observed security performance, not a guarantee of real-world risk.
 > Attacks are author-written. Independent suites (garak, PyRIT) not yet integrated.

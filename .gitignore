@@ -50,4 +50,7 @@ htmlcov/
 test-tmp-*/
 test_*.json
 audit.json
+coverage.json
+scratch/
+
 

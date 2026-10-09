@@ -199,14 +199,16 @@ Key items for interviewers/reviewers:
 ## 7. Resume Bullets (from measured numbers)
 
 - Designed and implemented a 9-layer deterministic security architecture
-  treating the LLM as an untrusted component; **0 / 52** adversarial extraction
-  attempts produced an authorized execution.
+  treating the LLM as an untrusted component; **0 / 51** red-team scenarios (41 adversarial)
+  produced an authorized financial execution.
+- Implemented M7.1 Red-Team Platform: state snapshot oracle (`SystemStateSnapshot`), 51 scenarios
+  across 15+ attack classes, multi-turn stateful sequences, and 5 multi-component attacks.
 - Fixed four P0/P1 security defects (FG-201–206): replaced float money with
   integer minor units, deny-by-default authority, NaN/Infinity rejection, and
   metadata-digest binding in Ed25519 signatures.
 - Built MCP boundary (4 tools exposed, signing/approval/keys structurally
   absent), agent orchestration loop with immutable capability profiles, and a
-  52-case adversarial evaluation harness; **592 tests pass on Python 3.12 and 3.13**.
+  51-case adversarial red-team harness; **649 tests pass on Python 3.12 and 3.13**.
 - Implemented atomic decision pipeline: nonce claim + receipt + ledger append
   in one SQLite transaction; signing CAS prevents double-signing; conservation
   invariant property-tested across concurrent transfers.
