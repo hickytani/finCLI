@@ -1,8 +1,8 @@
 """Offline LangChain stub for deterministic security testing.
 
-Provides a minimal implementation of the LangChain Runnable protocol that
-can be injected into LangChainPlanner during tests.  Zero network, zero
-API key, zero langchain-core dependency required to run these stubs.
+Provides minimal LangChain Runnable-compatible behavior for deterministic
+security tests. The production LangChainPlanner does not accept arbitrary
+Runnable injection. These stubs need no network, API key, or langchain-core.
 
 Use in tests:
 
@@ -10,7 +10,7 @@ Use in tests:
         StubChain, MaliciousChain, AuthorityInjectingChain,
         RetrievalInjectionChain, MemoryEscalationChain,
     )
-    planner = LangChainPlanner(chain=StubChain(output=...))
+    # Tests patch LangChainPlanner's internal chain builder to return StubChain.
 """
 
 from __future__ import annotations
