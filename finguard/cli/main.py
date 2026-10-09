@@ -579,6 +579,13 @@ def redteam_report(
     report_command(output=output, actor_id=actor_id)
 
 
+@redteam_app.command("coverage")
+def redteam_coverage() -> None:
+    """Display attack class breakdown and security property coverage matrix."""
+    from finguard.cli.redteam_commands import coverage_command
+    coverage_command()
+
+
 @redteam_app.command("ai")
 def redteam_ai(
     repetitions: int = typer.Option(1, "--repetitions", min=1, help="Repeat each of the 10 AI attacks."),

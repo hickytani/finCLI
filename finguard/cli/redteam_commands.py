@@ -22,7 +22,7 @@ from finguard.redteam.catalog import (
     ALL_SCENARIOS,
     BENIGN_CATALOG,
 )
-from finguard.redteam.models import AttackCategory
+from finguard.redteam.models import AttackCategory, SecurityProperty
 from finguard.redteam.runner import EvaluationResult, RedTeamMetrics, RedTeamRunner
 
 app = typer.Typer(name="redteam", help="M7 Agentic Red-Team & Security Evaluation Platform")
@@ -98,6 +98,7 @@ def _print_metrics(metrics: RedTeamMetrics) -> None:
 def run_command(
     scenario_id: str | None = typer.Argument(None, help="Scenario ID, e.g. M7-CAP-001"),
     category: str | None = typer.Option(None, "--category", "-c", help="Attack category"),
+    severity: str | None = typer.Option(None, "--severity", "-s", help="Filter by severity"),
     all_scenarios: bool = typer.Option(False, "--all", help="Run all scenarios"),
     actor_id: str = typer.Option("agent_mcp_default", "--actor", help="Agent actor ID"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
@@ -119,6 +120,12 @@ def run_command(
         if not scenarios:
             rprint(f"[yellow]No scenarios found for category: {category!r}[/]")
             raise typer.Exit(0)
+    elif severity:
+        sev_upper = severity.upper()
+        scenarios = [s for s in ALL_SCENARIOS if s.severity.upper() == sev_upper]
+        if not scenarios:
+            rprint(f"[yellow]No scenarios found for severity: {severity!r}[/]")
+            raise typer.Exit(0)
     elif scenario_id:
         matching = [s for s in ALL_SCENARIOS if s.scenario_id == scenario_id]
         if not matching:
@@ -127,7 +134,7 @@ def run_command(
             raise typer.Exit(1)
         scenarios = matching
     else:
-        rprint("[yellow]Specify a scenario ID, --category, or --all.[/]")
+        rprint("[yellow]Specify a scenario ID, --category, --severity, or --all.[/]")
         raise typer.Exit(1)
 
     console.rule(f"[bold cyan]FIN//GUARD M7 Red-Team ({len(scenarios)} scenario(s))")
@@ -160,6 +167,41 @@ def run_command(
             raise typer.Exit(2)
         else:
             rprint(f"\n[bold green]✓ Security gate PASSED — {len(results)} scenario(s) contained.[/]")
+
+
+@app.command("coverage")
+def coverage_command() -> None:
+    """Display attack class breakdown and security property coverage matrix."""
+    console.rule("[bold cyan]FIN//GUARD M7.1 Security Property Coverage Matrix")
+
+    # Table 1: Attack Category Breakdown
+    cat_counts: dict[str, int] = {}
+    for s in ADVERSARIAL_CATALOG:
+        cat_counts[s.category.value] = cat_counts.get(s.category.value, 0) + 1
+
+    t1 = Table(show_header=True, header_style="bold blue", title="Attack Categories")
+    t1.add_column("Category Code", style="cyan")
+    t1.add_column("Scenario Count", justify="right")
+    for cat, count in sorted(cat_counts.items()):
+        t1.add_row(cat, str(count))
+    console.print(t1)
+
+    # Table 2: Security Property Coverage
+    prop_counts: dict[str, int] = {}
+    for prop in SecurityProperty:
+        prop_counts[prop.value] = 0
+    for s in ADVERSARIAL_CATALOG:
+        for p in s.expected_security_properties:
+            prop_counts[p.value] = prop_counts.get(p.value, 0) + 1
+
+    t2 = Table(show_header=True, header_style="bold blue", title="Security Properties Matrix")
+    t2.add_column("Security Property", style="cyan")
+    t2.add_column("Scenarios", justify="right")
+    t2.add_column("Coverage Status", justify="center")
+    for prop, count in sorted(prop_counts.items()):
+        status = "[green]COVERED[/]" if count > 0 else "[red]UNCOVERED[/]"
+        t2.add_row(prop, str(count), status)
+    console.print(t2)
 
 
 @app.command("list")
