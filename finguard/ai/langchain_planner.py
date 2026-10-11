@@ -41,6 +41,7 @@ import concurrent.futures
 import json
 import logging
 import math
+import re
 from typing import Any
 
 from finguard.ai.provider import _AUTHORITY_FIELDS, ExtractionResult
@@ -49,6 +50,12 @@ logger = logging.getLogger(__name__)
 
 # Default hard cap on raw LangChain output before JSON parsing.
 _MAX_CHAIN_OUTPUT_BYTES = 8_192
+_SECRET_VALUE_PATTERNS = (
+    re.compile(r"(?i)\bbearer[_\s]+[A-Za-z0-9._~+/-]{8,}={0,2}"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+)
+_REDACTED_SECRET = "[REDACTED]"
 
 
 class _DuplicateJSONField(ValueError):
@@ -206,16 +213,25 @@ class LangChainPlanner:
 
     def _invoke_chain_with_timeout(self, human_message: str) -> str:
         """Invoke internal chain with deadline enforcement using a worker thread."""
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(self._invoke_chain, human_message)
-            try:
-                return future.result(timeout=self.timeout)
-            except concurrent.futures.TimeoutError as err:
-                raise TimeoutError(f"Chain execution timed out after {self.timeout} seconds") from err
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(self._invoke_chain, human_message)
+        try:
+            return future.result(timeout=self.timeout)
+        except concurrent.futures.TimeoutError as err:
+            future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise TimeoutError(f"Chain execution timed out after {self.timeout} seconds") from err
+        except Exception:
+            executor.shutdown(wait=True)
+            raise
+        else:
+            executor.shutdown(wait=True)
 
     def _invoke_chain(self, human_message: str) -> str:
         """Invoke the LangChain chain and return the raw string output."""
-        result = self._chain.invoke({"system": _SYSTEM_PROMPT, "human": human_message})
+        chain_input = {"system": _SYSTEM_PROMPT, "human": human_message}
+        invoke = getattr(self._chain, "invoke", None)
+        result = invoke(chain_input) if callable(invoke) else self._chain(chain_input)
 
         if getattr(result, "tool_calls", None) or getattr(result, "invalid_tool_calls", None):
             raise ValueError("Tool calls are not supported by the extraction boundary")
@@ -285,6 +301,7 @@ class LangChainPlanner:
             if nested_detected:
                 merged = list(result.authority_fields_detected) + nested_detected
                 result = result.model_copy(update={"authority_fields_detected": merged})
+            result = result.model_copy(update={"reason": self._redact_secret_values(result.reason)})
             return result
         except Exception:  # noqa: BLE001
             logger.warning("LangChain extraction output failed schema validation")
@@ -292,6 +309,14 @@ class LangChainPlanner:
                 extraction_success=False,
                 error_message="LangChain extraction output failed schema validation.",
             )
+
+    @staticmethod
+    def _redact_secret_values(value: str) -> str:
+        """Remove recognizable credential values before they leave extraction."""
+        redacted = value
+        for pattern in _SECRET_VALUE_PATTERNS:
+            redacted = pattern.sub(_REDACTED_SECRET, redacted)
+        return redacted
 
     @staticmethod
     def _reject_duplicate_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

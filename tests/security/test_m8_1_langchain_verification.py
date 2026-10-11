@@ -325,6 +325,25 @@ def test_secret_fields_and_raw_model_output_are_not_serialized() -> None:
     assert any(item.startswith("metadata.") for item in result.authority_fields_detected)
 
 
+def test_bearer_shaped_reason_is_redacted_at_extraction_boundary() -> None:
+    RunnableLambda = _runnable_lambda()
+    synthetic_secret = "bearer_eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+    output = _json_output(
+        {
+            **_VALID_OUTPUT,
+            "reason": f"Invoice requires review. Token: {synthetic_secret}",
+        }
+    )
+
+    result = _planner_with_test_runnable(
+        RunnableLambda(lambda _: output)
+    ).extract_transaction("Pay vendor-a INR 100")
+
+    assert result.extraction_success
+    assert result.reason == "Invoice requires review. Token: [REDACTED]"
+    assert synthetic_secret not in result.model_dump_json()
+
+
 def test_chain_exception_does_not_leak_to_logs_errors_or_pipeline_state(caplog) -> None:
     RunnableLambda = _runnable_lambda()
     secret = "M8-ERROR-SECRET-SENTINEL"
