@@ -16,7 +16,7 @@ This is a deterministic local evaluation, not a comparison against a live model 
 
 ## Latest recorded results
 
-The generated scorecard is [`M9-RESULTS.json`](./M9-RESULTS.json), timestamped `2026-10-11T13:05:50.321845+00:00`.
+The generated scorecard is [`M9-RESULTS.json`](./M9-RESULTS.json), timestamped `2026-10-11T14:27:13.627916+00:00`.
 
 | Measure | Observed result |
 |---|---:|
@@ -38,17 +38,19 @@ These corpus-specific measurements are not a general attack-success probability 
 
 ## Validation recorded
 
-The latest validation run completed with:
+The latest local validation used Python 3.13.7 on Windows:
 
-- Focused M8/M9 security tests: **60 passed**, 40 SQLAlchemy deprecation warnings, in 11.46 seconds.
-- Full repository test suite: **817 passed**, 761 SQLAlchemy deprecation warnings, in 135.65 seconds.
+- Focused M8/M9 security tests: **46 passed**, 24 SQLAlchemy deprecation warnings, in 12.18 seconds.
+- Full repository test suite: **819 passed**, 761 SQLAlchemy deprecation warnings, in 138.64 seconds.
+- CI coverage selection (`pytest -v --cov=finguard --cov-branch --cov-report=term-missing --cov-fail-under=71 -m "not slow" tests/unit/ tests/regression/ tests/security/ tests/property/`): **810 passed**, **71.05% branch coverage**, in 155.15 seconds.
 - Ruff: passed.
 - `scripts/check_invariants.py`: passed; all 94 cited tests were found.
-- `git diff --check`: passed.
-- CI coverage test selection: **808 passed**, but the required 71% branch coverage gate failed at **70.96%**. The change is not ready to publish until that gate passes; its threshold was not lowered.
+- `git diff --check`: passed after the generated-scorecard timestamp refresh and validation-document update.
 
-The warnings concern existing uses of `datetime.utcnow()` and were not changed as part of this work.
+The earlier GitHub Actions run for commit `ac4ff6b2ee0fb444d4a499d34e860a7148c24df5` has contradictory evidence: the Python 3.13 job log prints `FAIL Required test coverage of 71% not reached. Total coverage: 70.77%`, while the Actions API reports the coverage step and job as successful. That run predates the two new extraction-security regression tests. A new CI run on the updated commit is required to resolve the discrepancy; local Windows coverage alone is not evidence that Linux CI meets the gate.
+
+The SQLAlchemy warnings concern existing uses of `datetime.utcnow()` and were not changed as part of this work.
 
 ## Worktree handoff
 
-Changes are on `m10-eval-oracle-hardening` in the isolated `ftech-m10-eval-oracle` worktree. They remain uncommitted and unpushed because the required coverage gate failed. The verified remote is `hickytani/finCLI`; local `main` and fetched `origin/main` are both `6acee3b3f3aca09c79ccf3b20fba4f5b582288aa`. No merge or change to the original checkout or its stash was made.
+The initial M10 changes are committed and pushed on `m10-eval-oracle-hardening` as `ac4ff6b2ee0fb444d4a499d34e860a7148c24df5`; PR [#16](https://github.com/hickytani/finCLI/pull/16) targets `main` and remains open and unmerged. The two new regression tests and regenerated scorecard have not yet been committed or pushed. The verified remote is `hickytani/finCLI`; the previously fetched `origin/main` was `6acee3b3f3aca09c79ccf3b20fba4f5b582288aa`. No merge or change to the original checkout or its stash was made.
