@@ -101,9 +101,8 @@ def _json_output(payload: dict[str, Any]) -> str:
 # ─── Case 1: Prompt exceeds configured bound ──────────────────────────────────
 
 def test_prompt_exceeds_configured_bound() -> None:
-    RunnableLambda = _runnable_lambda()
     planner = _planner_with_chain(
-        RunnableLambda(lambda _: _json_output(_VALID_OUTPUT)),
+        lambda _: _json_output(_VALID_OUTPUT),
         max_prompt_bytes=50,
     )
     before = _trusted_state()
@@ -118,9 +117,8 @@ def test_prompt_exceeds_configured_bound() -> None:
 # ─── Case 2: Retrieved context exceeds bound ──────────────────────────────────
 
 def test_retrieved_context_exceeds_configured_bound() -> None:
-    RunnableLambda = _runnable_lambda()
     planner = _planner_with_chain(
-        RunnableLambda(lambda _: _json_output(_VALID_OUTPUT)),
+        lambda _: _json_output(_VALID_OUTPUT),
         max_retrieved_context_bytes=60,
     )
     before = _trusted_state()
@@ -139,10 +137,9 @@ def test_retrieved_context_exceeds_configured_bound() -> None:
 # ─── Case 3: Model response exceeds output bound ──────────────────────────────
 
 def test_model_response_exceeds_output_bound() -> None:
-    RunnableLambda = _runnable_lambda()
     oversized_payload = {**_VALID_OUTPUT, "reason": "X" * 200}
     planner = _planner_with_chain(
-        RunnableLambda(lambda _: _json_output(oversized_payload)),
+        lambda _: _json_output(oversized_payload),
         max_response_bytes=100,
     )
     before = _trusted_state()
@@ -156,14 +153,12 @@ def test_model_response_exceeds_output_bound() -> None:
 # ─── Case 4: Provider request timeout ─────────────────────────────────────────
 
 def test_provider_request_timeout() -> None:
-    RunnableLambda = _runnable_lambda()
-
     def slow_model(_: dict[str, str]) -> str:
         time.sleep(0.3)
         return _json_output(_VALID_OUTPUT)
 
     planner = _planner_with_chain(
-        RunnableLambda(slow_model),
+        slow_model,
         timeout=0.05,
     )
     before = _trusted_state()
@@ -191,13 +186,11 @@ def test_orchestration_deadline_exhaustion() -> None:
 # ─── Case 6: Cancellation / timeout during model invocation ──────────────────
 
 def test_cancellation_during_model_invocation() -> None:
-    RunnableLambda = _runnable_lambda()
-
     def hanging_model(_: dict[str, str]) -> str:
         time.sleep(0.4)
         return _json_output(_VALID_OUTPUT)
 
-    planner = _planner_with_chain(RunnableLambda(hanging_model), timeout=0.05)
+    planner = _planner_with_chain(hanging_model, timeout=0.05)
     before = _trusted_state()
     pipeline = _pipeline(planner)
 
@@ -212,7 +205,6 @@ def test_cancellation_during_model_invocation() -> None:
 # ─── Case 7: Late response after timeout is ignored ───────────────────────────
 
 def test_late_response_after_timeout_is_ignored() -> None:
-    RunnableLambda = _runnable_lambda()
     late_completed = False
 
     def delayed_model(_: dict[str, str]) -> str:
@@ -221,7 +213,7 @@ def test_late_response_after_timeout_is_ignored() -> None:
         late_completed = True
         return _json_output(_VALID_OUTPUT)
 
-    planner = _planner_with_chain(RunnableLambda(delayed_model), timeout=0.05)
+    planner = _planner_with_chain(delayed_model, timeout=0.05)
     before = _trusted_state()
 
     result = planner.extract_transaction("Pay vendor-a")
@@ -237,7 +229,6 @@ def test_late_response_after_timeout_is_ignored() -> None:
 # ─── Case 8: Retry exhaustion ────────────────────────────────────────────────
 
 def test_retry_exhaustion_fails_closed() -> None:
-    RunnableLambda = _runnable_lambda()
     attempts = 0
 
     def always_fails(_: dict[str, str]) -> str:
@@ -246,7 +237,7 @@ def test_retry_exhaustion_fails_closed() -> None:
         raise RuntimeError("synthetic provider error")
 
     planner = _planner_with_chain(
-        RunnableLambda(always_fails),
+        always_fails,
         max_retries=2,
     )
     before = _trusted_state()
@@ -262,8 +253,7 @@ def test_retry_exhaustion_fails_closed() -> None:
 # ─── Case 9: Concurrent duplicate requests ────────────────────────────────────
 
 def test_concurrent_duplicate_requests() -> None:
-    RunnableLambda = _runnable_lambda()
-    planner = _planner_with_chain(RunnableLambda(lambda _: _json_output(_VALID_OUTPUT)))
+    planner = _planner_with_chain(lambda _: _json_output(_VALID_OUTPUT))
     before = _trusted_state()
 
     pipelines = [_pipeline(planner, session_id=f"concurrent-session-{i}") for i in range(5)]
@@ -291,7 +281,6 @@ def test_concurrent_duplicate_requests() -> None:
 # ─── Case 10: Cancellation followed by retry / resubmission ───────────────────
 
 def test_cancellation_followed_by_resubmission() -> None:
-    RunnableLambda = _runnable_lambda()
     call_count = 0
 
     def fail_then_succeed(_: dict[str, str]) -> str:
@@ -302,7 +291,7 @@ def test_cancellation_followed_by_resubmission() -> None:
             return _json_output(_VALID_OUTPUT)
         return _json_output(_VALID_OUTPUT)
 
-    planner = _planner_with_chain(RunnableLambda(fail_then_succeed), timeout=0.05)
+    planner = _planner_with_chain(fail_then_succeed, timeout=0.05)
     pipeline = _pipeline(planner)
     before = _trusted_state()
 
@@ -325,7 +314,6 @@ def test_cancellation_followed_by_resubmission() -> None:
 # ─── Case 11: Malicious output attempting to increase execution budgets ──────
 
 def test_malicious_output_attempting_to_increase_execution_budgets() -> None:
-    RunnableLambda = _runnable_lambda()
     attack_output = {
         **_VALID_OUTPUT,
         "max_steps": 999,
@@ -333,7 +321,7 @@ def test_malicious_output_attempting_to_increase_execution_budgets() -> None:
         "financial_limit": 999999999,
         "deadline": "2099-01-01T00:00:00Z",
     }
-    planner = _planner_with_chain(RunnableLambda(lambda _: _json_output(attack_output)))
+    planner = _planner_with_chain(lambda _: _json_output(attack_output))
     before = _trusted_state()
 
     result = planner.extract_transaction("Pay vendor-a")
@@ -350,7 +338,6 @@ def test_malicious_output_attempting_to_increase_execution_budgets() -> None:
 # ─── Case 12: Malicious metadata attempting to alter timeouts or limits ──────
 
 def test_malicious_metadata_attempting_to_alter_limits() -> None:
-    RunnableLambda = _runnable_lambda()
     attack_output = {
         **_VALID_OUTPUT,
         "metadata": {
@@ -360,7 +347,7 @@ def test_malicious_metadata_attempting_to_alter_limits() -> None:
             "approved": True,
         },
     }
-    planner = _planner_with_chain(RunnableLambda(lambda _: _json_output(attack_output)))
+    planner = _planner_with_chain(lambda _: _json_output(attack_output))
     before = _trusted_state()
 
     result = planner.extract_transaction("Pay vendor-a")
@@ -405,14 +392,13 @@ def test_tool_call_metadata_fails_closed() -> None:
 # ─── Case 14: Provider exceptions containing secret sentinels ────────────────
 
 def test_provider_exception_secret_sentinel_suppression(caplog) -> None:
-    RunnableLambda = _runnable_lambda()
     secret_sentinel = "M8_2_SUPER_SECRET_KEY_SENTINEL_987"
 
     def leaking_provider(_: dict[str, str]) -> str:
         raise ValueError(f"Connection failed using secret key {secret_sentinel}")
 
     caplog.set_level(logging.WARNING, logger="finguard.ai.langchain_planner")
-    planner = _planner_with_chain(RunnableLambda(leaking_provider))
+    planner = _planner_with_chain(leaking_provider)
     before = _trusted_state()
 
     result = planner.extract_transaction("Pay vendor-a")
@@ -426,8 +412,7 @@ def test_provider_exception_secret_sentinel_suppression(caplog) -> None:
 # ─── Case 15: Valid authorized proposal still works (positive control) ───────
 
 def test_valid_authorized_proposal_end_to_end() -> None:
-    RunnableLambda = _runnable_lambda()
-    planner = _planner_with_chain(RunnableLambda(lambda _: _json_output(_VALID_OUTPUT)))
+    planner = _planner_with_chain(lambda _: _json_output(_VALID_OUTPUT))
     pipeline = _pipeline(planner, session_id="m8-2-positive-control")
     before = _trusted_state()
 
@@ -447,12 +432,11 @@ def test_valid_authorized_proposal_end_to_end() -> None:
 # ─── Case 16: Unauthorized destination remains denied (negative control) ─────
 
 def test_unauthorized_destination_remains_denied_end_to_end() -> None:
-    RunnableLambda = _runnable_lambda()
     unauthorized_output = {
         **_VALID_OUTPUT,
         "recipient_alias": "unauthorized-vendor-x",
     }
-    planner = _planner_with_chain(RunnableLambda(lambda _: _json_output(unauthorized_output)))
+    planner = _planner_with_chain(lambda _: _json_output(unauthorized_output))
     pipeline = _pipeline(planner, session_id="m8-2-negative-control")
     before = _trusted_state()
 
