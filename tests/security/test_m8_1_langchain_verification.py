@@ -299,7 +299,6 @@ def test_real_langchain_runnable_invalid_money_fails_before_mcp(amount: str) -> 
 
 
 def test_secret_fields_and_raw_model_output_are_not_serialized() -> None:
-    RunnableLambda = _runnable_lambda()
     secret = "M8-SECRET-SENTINEL"
     output = _json_output(
         {
@@ -314,7 +313,7 @@ def test_secret_fields_and_raw_model_output_are_not_serialized() -> None:
         }
     )
     result = _planner_with_test_runnable(
-        RunnableLambda(lambda _: output)
+        lambda _: output
     ).extract_transaction("test")
     serialized = result.model_dump_json()
 
@@ -326,7 +325,6 @@ def test_secret_fields_and_raw_model_output_are_not_serialized() -> None:
 
 
 def test_authority_fields_nested_in_metadata_lists_are_removed() -> None:
-    RunnableLambda = _runnable_lambda()
     output = _json_output(
         {
             **_VALID_OUTPUT,
@@ -342,7 +340,7 @@ def test_authority_fields_nested_in_metadata_lists_are_removed() -> None:
     )
 
     result = _planner_with_test_runnable(
-        RunnableLambda(lambda _: output)
+        lambda _: output
     ).extract_transaction("Pay vendor-a INR 100")
 
     assert result.extraction_success
@@ -354,7 +352,6 @@ def test_authority_fields_nested_in_metadata_lists_are_removed() -> None:
 
 
 def test_nonfinite_number_nested_in_metadata_fails_closed() -> None:
-    RunnableLambda = _runnable_lambda()
     output = (
         '{"amount":"100.00","currency":"INR","recipient_alias":"vendor-a",'
         '"from_account":"treasury","reason":"finite proposal",'
@@ -362,7 +359,7 @@ def test_nonfinite_number_nested_in_metadata_fails_closed() -> None:
     )
     before = _trusted_state()
 
-    result = _pipeline(RunnableLambda(lambda _: output)).process_request(
+    result = _pipeline(lambda _: output).process_request(
         "Pay vendor-a INR 100"
     )
 
@@ -373,7 +370,6 @@ def test_nonfinite_number_nested_in_metadata_fails_closed() -> None:
 
 
 def test_bearer_shaped_reason_is_redacted_at_extraction_boundary() -> None:
-    RunnableLambda = _runnable_lambda()
     synthetic_secret = "bearer_eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
     output = _json_output(
         {
@@ -383,7 +379,7 @@ def test_bearer_shaped_reason_is_redacted_at_extraction_boundary() -> None:
     )
 
     result = _planner_with_test_runnable(
-        RunnableLambda(lambda _: output)
+        lambda _: output
     ).extract_transaction("Pay vendor-a INR 100")
 
     assert result.extraction_success
