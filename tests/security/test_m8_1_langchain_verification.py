@@ -497,3 +497,35 @@ def test_langchain_retry_runs_one_downstream_proposal_and_no_execution() -> None
     before_decisions = sum(action == "DECISION" for _, action, _ in before["ledger"])
     after_decisions = sum(action == "DECISION" for _, action, _ in after["ledger"])
     assert after_decisions - before_decisions == 1
+
+
+def test_successful_chain_invocation_shuts_down_its_executor(monkeypatch: pytest.MonkeyPatch) -> None:
+    from concurrent.futures import Future
+
+    from finguard.ai import langchain_planner
+
+    shutdown_calls: list[tuple[bool, bool]] = []
+
+    class TrackingExecutor:
+        def __init__(self, max_workers: int) -> None:
+            assert max_workers == 1
+
+        def submit(self, function: Any, *args: Any) -> Future[str]:
+            future: Future[str] = Future()
+            future.set_result(function(*args))
+            return future
+
+        def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
+            shutdown_calls.append((wait, cancel_futures))
+
+    monkeypatch.setattr(
+        langchain_planner.concurrent.futures,
+        "ThreadPoolExecutor",
+        TrackingExecutor,
+    )
+    planner = object.__new__(LangChainPlanner)
+    planner.timeout = 1.0
+    planner._invoke_chain = lambda message: message
+
+    assert planner._invoke_chain_with_timeout("complete") == "complete"
+    assert shutdown_calls == [(True, False)]

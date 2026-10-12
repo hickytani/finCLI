@@ -216,7 +216,7 @@ class LangChainPlanner:
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         future = executor.submit(self._invoke_chain, human_message)
         try:
-            return future.result(timeout=self.timeout)
+            result = future.result(timeout=self.timeout)
         except concurrent.futures.TimeoutError as err:
             future.cancel()
             executor.shutdown(wait=False, cancel_futures=True)
@@ -226,6 +226,7 @@ class LangChainPlanner:
             raise
         else:
             executor.shutdown(wait=True)
+            return result
 
     def _invoke_chain(self, human_message: str) -> str:
         """Invoke the LangChain chain and return the raw string output."""
