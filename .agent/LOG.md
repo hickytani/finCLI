@@ -181,3 +181,17 @@
 - Final exact CI selector on Python 3.13.7: `pytest -v --cov=finguard --cov-branch --cov-report=term-missing --cov-fail-under=71 -m "not slow" tests/unit/ tests/regression/ tests/security/ tests/property/` -> 816 passed, 71.10%; machine-readable exact percentage -> 71.10258%. Ruff, invariant references (94), workflow YAML parsing, the coverage-gate tests (3), and `git diff --check` passed.
 - A previous full attempt had transient host Argon2 allocation and process-concurrency failures; the audit-ledger tests passed in isolation (16 passed), and the final full CI-selector rerun passed without changing Argon2 parameters or weakening tests. An optional-dependency simulation launched from stdin was invalid for multiprocessing and is not counted as passing evidence.
 - GitHub Actions has not yet run against this follow-up commit. PR #16 remains open; do not merge until the new Ubuntu matrix and required reviews/checks pass.
+
+## M10 Production Branch Coverage Hardening (2026-10-14)
+
+- On m10-eval-oracle-hardening at 0fd09e0, investigated the CI failure where Linux branch coverage was below the 71.00% threshold.
+- Added comprehensive unit tests in tests/unit/test_coverage_gaps.py targeting uncovered production branches in security-relevant modules:
+  - crypto/hashing.py: hash-chain entry digest chaining and collision tests (50% -> 100%).
+  - policy/parser.py: error paths for missing policy files, non-dictionary YAML, malformed YAML syntax, and schema validation failures (54% -> 100%).
+  - core/canonical.py: CanonicalEncoder handling of datetime (naive and aware), date, UUID, Enum, Decimal, set, and bytes types; CanonicalV2Encoder UTC normalization; and canonical version dispatch and legacy amount formatting (57% -> 97%).
+  - evaluation/wilson.py: Wilson score confidence interval boundary handling for zero trials, negative trials, all/no/half successes, 90%/95%/99% confidence levels, and input clamping (15% -> 100%).
+  - redteam/coverage.py: coverage dictionary retrieval and defensive copying (0% -> 100%).
+  - core/errors.py: constructors for PolicyViolationError and AuditIntegrityError (71% -> 100%).
+- Full CI test suite (pytest -v --cov=finguard --cov-branch --cov-report=term-missing --cov-fail-under=71 -m "not slow" tests/unit/ tests/regression/ tests/security/ tests/property/): 838 passed, 20 skipped, 0 failed.
+- Exact unrounded branch coverage (check_coverage_threshold.py): 71.82768% (comfortably exceeds the 71.00% gate on all platforms).
+- Ruff linting, scripts/check_invariants.py (94 cited tests verified), and git diff --check all passed.
