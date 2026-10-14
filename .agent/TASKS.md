@@ -42,7 +42,7 @@
 - [x] M2.1 authority-chain core: decision receipt/hash/version, signed-registry approver/signer keys, version-bound approvals, signing CAS, execution-time chain verification, and execution CAS with balance/unique-result transaction. Signature bytes do not directly bind lifecycle version; this remains documented separately from the canonical transaction signature.
 - [x] M2.2: decision/nonce/receipt/audit, approval/signing evidence, and simulator execution share SQLite transactions; injected rollback/reload/retry tests pass; execution alone uses `BEGIN IMMEDIATE` + 5000 ms busy timeout; process-level signing and execution races prove one valid winner/effect. Abrupt process death remains untested.
 - [ ] Review whether signing bytes must include lifecycle version; current signature remains over canonical v2 bytes and signed-version evidence is checked separately. Any signature-envelope change requires crypto/security review.
-- [ ] FG-301: Atomic Unit of Work for decision pipeline (single session, `BEGIN IMMEDIATE`, SQLite WAL).
+- [x] FG-301: Atomic Unit of Work for decision pipeline (single session, `BEGIN IMMEDIATE`, SQLite WAL).
 - [x] FG-302: CAS signing gate (`UPDATE ... WHERE state = expected`) and simulator execution CAS.
 - [x] FG-303 / M2.3: Monotonic ledger sequence, canonical signed checkpoints, previous-checkpoint linkage, identity/key registry binding, atomic checkpoint creation, and offline verification.
 - [ ] FG-304: Unified aware-UTC `Clock` service; remove naive `_utcnow()` shim.
