@@ -112,7 +112,18 @@
 - Focused verification: 2 idempotency regression tests passed.
 - Full verification: `py -m pytest -q` -> 196 passed, 0 failed, 36.64s; SQLAlchemy `datetime.utcnow()` deprecation warnings remain.
 - Current uncommitted changes: `finguard/decision/engine.py`, `tests/unit/test_security_core_phase2b.py`, `docs/INVARIANTS.md`, `.agent/TASKS.md`, `.agent/LOG.md`. No commit or push was made.
-- Limits: completed exact retries are covered only when transaction identity and canonical bytes are identical. Decision UoW atomicity, concurrent idempotency claims, approvals' row-version binding, signing CAS, execution gate consolidation, and crash-injection remain open. M2 is not complete.
+
+## FG-301 Unit of Work (2026-10-13)
+
+- Started from the existing `m12-persistence-atomicity` branch at `6acee3b`, equal to the inspected remote `main`. The branch itself was clean before work; implementation is isolated in a separate worktree so pre-existing uncommitted M11/M12 changes in the other worktree remain untouched.
+- Before changes, `DecisionEngine.decide()` already wrapped transaction, nonce, receipt, approval-request, and audit writes in `session.begin()`, and rollback fault-injection tests existed. The SQLite engine enables WAL and a 5000 ms busy timeout. Gaps for FG-301: the decision used deferred `session.begin()` instead of reserving the writer with `BEGIN IMMEDIATE`; idempotency replay opened a separate global session before the main decision session; `DecisionEngine` offered no session-factory injection seam.
+- Baseline: `.venv\Scripts\python.exe -m pytest -q tests\unit\test_phase2_decision.py tests\unit\test_security_core_phase2b.py` -> 40 passed, 0 failed. Tests emitted existing SQLAlchemy `datetime.utcnow()` deprecation warnings.
+- Scope: make one injected session/UoW own idempotency lookup and the complete decision write set; acquire SQLite's immediate writer before database-dependent decision reads; preserve existing fail-closed result shape and rollback behavior. Do not change signing, approvals, canonicalization, or migration behavior in this ticket slice.
+- Implemented `UnitOfWork` with SQLite-only enforcement, fresh-session validation, immediate writer reservation, commit/rollback, and guaranteed session close. `DecisionEngine` now injects the session factory and shares one UoW session for idempotency lookup, nonce claim, transaction/state update, receipt, approval request, risk history, and ledger append.
+- Added regressions for one session across decision/replay, `BEGIN IMMEDIATE`, unsupported/existing-transaction session cleanup, exiting an unentered UoW, and idempotency-key reuse with altered content. Focused run (`test_phase2_decision.py`, `test_security_core_phase2b.py`, `test_m9_comparative_red_team.py`) -> 55 passed. Changed-file Ruff, invariant reference check (94 tests), and `git diff --check` passed.
+- Exact CI selector on Windows/Python 3.13: `pytest -v --cov=finguard --cov-branch --cov-report=term-missing --cov-fail-under=71 -m "not slow" tests/unit/ tests/regression/ tests/security/ tests/property/` -> 801 passed, but coverage is 70.80% and the 71% gate fails. This is not a green T1/CI gate; no threshold was changed. Earlier Linux PR logs showed 70.95%, so platform/version-specific coverage remains unresolved.
+- The M9 test rewrites `docs/M9-RESULTS.json`'s timestamp; restored that generated field to its pre-run value. No commit or push was made.
+- Limits: completed retries still require matching transaction identity and canonical bytes. UoW rollback is tested at four injected decision checkpoints; process-death and commit-time failure are not covered, and concurrent idempotency-key claims remain untested. Approval row-version binding, signing CAS, and execution-gate work remain separate M2 concerns. M2 is not complete.
 
 ## M2.1 Transaction Authority Chain (2026-10-02)
 
