@@ -40,6 +40,13 @@ jobs:
           pytest -v --cov=finguard --cov-branch --cov-report=term-missing \
             --cov-fail-under=71 -m "not slow" \
             tests/unit/ tests/regression/ tests/security/ tests/property/
+      - name: Enforce exact branch coverage threshold
+        if: always()
+        env:
+          COVERAGE_REPORT: ${{ runner.temp }}/finguard-coverage.json
+        run: |
+          python -m coverage json -o "$COVERAGE_REPORT"
+          python scripts/check_coverage_threshold.py "$COVERAGE_REPORT"
       - name: Upload coverage report
         if: matrix.python-version == '3.12'
         uses: actions/upload-artifact@v4
