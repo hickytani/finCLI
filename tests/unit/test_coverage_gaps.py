@@ -123,7 +123,7 @@ class TestCanonicalEncoder:
 
     def test_encodes_datetime_with_utc(self):
         """Naive datetime gets UTC timezone and canonical format."""
-        dt = datetime.datetime(2026, 1, 1, 0, 0, 0)  # noqa: DTZ001
+        dt = datetime.datetime.fromisoformat("2026-01-01T00:00:00")
         result = json.dumps({"ts": dt}, cls=CanonicalEncoder)
         assert "2026-01-01T00:00:00.000000Z" in result
 
