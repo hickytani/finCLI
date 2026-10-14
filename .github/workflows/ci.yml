@@ -49,7 +49,7 @@ jobs:
           python scripts/check_coverage_threshold.py "$COVERAGE_REPORT"
       - name: Upload coverage report
         if: matrix.python-version == '3.12'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: .coverage
@@ -69,7 +69,7 @@ jobs:
       - name: Run pip-audit
         run: pip-audit --desc --format=json --output=pip-audit-report.json || true
       - name: Upload audit report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pip-audit-report
           path: pip-audit-report.json
@@ -97,7 +97,7 @@ jobs:
         with:
           subject-path: dist/*
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
