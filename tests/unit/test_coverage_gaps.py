@@ -1,4 +1,4 @@
-﻿"""Tests for production modules with low branch coverage.
+"""Tests for production modules with low branch coverage.
 
 These tests target uncovered branches in security-relevant modules:
 crypto/hashing, policy/parser, core/canonical, evaluation/wilson,
@@ -196,7 +196,7 @@ class TestCanonicalSerializeVersions:
         data = {"key": "val"}
         result = canonical_serialize_v2(data)
         assert result.startswith(DOMAIN_PREFIX_V2)
-        payload = result[len(DOMAIN_PREFIX_V2):]
+        payload = result[len(DOMAIN_PREFIX_V2) :]
         assert json.loads(payload) == {"key": "val"}
 
     def test_version_dispatch_v1(self):
