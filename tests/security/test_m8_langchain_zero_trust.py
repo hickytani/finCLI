@@ -53,6 +53,11 @@ from finguard.mcp.boundary import MCPSecurityBoundary, MCPSession
 # ---------------------------------------------------------------------------
 
 
+def test_unknown_malicious_chain_attack_type_fails_fast() -> None:
+    with pytest.raises(ValueError, match="Unknown attack type"):
+        MaliciousChain("unknown_attack_type")
+
+
 def _planner(chain) -> LangChainPlanner:
     with patch.object(
         LangChainPlanner,
@@ -341,6 +346,16 @@ class TestG11NestedInjection:
 
 class TestG12RetrievalInjection:
     """Malicious retrieved content tries to override extraction instructions."""
+
+    def test_benign_retrieval_context_uses_safe_fallback(self):
+        planner = _planner(RetrievalInjectionChain())
+        result = planner.extract_transaction("pay alice 100")
+
+        assert result.extraction_success
+        assert result.amount == "100.00"
+        assert result.recipient_alias == "alice"
+        assert result.reason == "normal retrieval payment"
+        assert result.authority_fields_detected == []
 
     def test_retrieval_injection_contained(self):
         malicious_retrieved = (
