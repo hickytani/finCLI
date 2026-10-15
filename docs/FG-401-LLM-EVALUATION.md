@@ -1,3 +1,10 @@
+> **Historical FG-401 artifact.** This is a `MockLLMProvider` run dated
+> 2026-10-07, not a live-model evaluation. The old extraction-accuracy
+> counters did not compare expected fields with actual output fields, and the
+> containment denominator included incomplete pipeline results. Those metrics
+> are invalid and superseded by the M10 implementation. Measurements below
+> are preserved for provenance; do not quote them as current.
+
 # FIN//GUARD FG-401 LLM Security Evaluation Report
 
 **Evaluation Timestamp**: `2026-10-07T16:45:44.688493+00:00`

@@ -7,10 +7,9 @@ legitimate-task success, attack blocking rate, and state integrity.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
+from finguard.ai.langchain_planner import LangChainPlanner
 from finguard.evaluation.comparative import (
     ComparativeCase,
     ComparativeEvaluator,
@@ -20,8 +19,6 @@ from finguard.evaluation.comparative import (
     _changed_existing_records,
 )
 from finguard.evaluation.m9_dataset import get_m9_dataset
-
-_RESULTS_PATH = Path("docs/M9-RESULTS.json")
 
 
 def test_m9_comparative_red_team_suite() -> None:
@@ -92,11 +89,8 @@ def test_m9_comparative_red_team_suite() -> None:
         if result.is_legitimate
     )
 
-    # 5. Export machine-readable JSON artifact docs/M9-RESULTS.json
-    _RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _RESULTS_PATH.write_text(scorecard.model_dump_json(indent=2), encoding="utf-8")
-    assert _RESULTS_PATH.exists()
-    assert ComparativeScorecard.model_validate_json(_RESULTS_PATH.read_text(encoding="utf-8")) == scorecard
+    # Artifact regeneration is an explicit operation; tests must not overwrite reports.
+    assert ComparativeScorecard.model_validate_json(scorecard.model_dump_json()) == scorecard
 
 
 @pytest.mark.parametrize(
@@ -277,6 +271,111 @@ def test_integrity_violations_in_reliability_cases_are_counted(
     assert scorecard.reliability_cases_count == 1
     assert scorecard.guarded_attack_success_count == 0
     assert scorecard.state_integrity_violations_count == 1
+
+
+def test_unexpected_provider_outcome_is_inconclusive_not_a_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        LangChainPlanner,
+        "_invoke_chain_with_timeout",
+        lambda _self, _message: (
+            '{"amount":"100.00","currency":"INR",'
+            '"recipient_alias":"vendor-a","from_account":"treasury"}'
+        ),
+    )
+    case = next(case for case in get_m9_dataset() if case.case_id == "M9-ATTACK-F3")
+
+    scorecard = ComparativeEvaluator().run_suite([case])
+    result = scorecard.case_results[0]
+
+    assert result.provider_outcome == "unexpected"
+    assert result.evaluation_status == "inconclusive"
+    assert scorecard.evaluated_adversarial_cases_count == 0
+    assert scorecard.reliability_cases_count == 0
+    assert scorecard.inconclusive_cases_count == 1
+    assert scorecard.attack_blocking_rate is None
+
+
+def test_timeout_with_persisted_proposal_is_inconclusive_and_reported_as_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from finguard.evaluation import comparative
+
+    before = {
+        "transactions": {},
+        "receipts": {},
+        "ledger": {},
+        "balances": {},
+        "executions": {},
+    }
+    after = {
+        **before,
+        "transactions": {"unexpected": ("transaction-row",)},
+    }
+    snapshots = iter((before, after))
+    monkeypatch.setattr(comparative, "_get_trusted_state", lambda: next(snapshots))
+    monkeypatch.setattr(
+        LangChainPlanner,
+        "_invoke_chain_with_timeout",
+        lambda _self, _message: (_ for _ in ()).throw(TimeoutError("synthetic timeout")),
+    )
+    case = next(case for case in get_m9_dataset() if case.case_id == "M9-ATTACK-F3")
+
+    scorecard = ComparativeEvaluator().run_suite([case])
+    result = scorecard.case_results[0]
+
+    assert result.evaluation_status == "inconclusive"
+    assert result.provider_outcome == "unexpected"
+    assert result.guarded_state_integrity_violation is True
+    assert scorecard.reliability_cases_count == 0
+    assert scorecard.inconclusive_cases_count == 1
+    assert scorecard.state_integrity_violations_count == 1
+    assert scorecard.guarded_attack_success_count == 0
+    assert scorecard.attack_blocking_rate is None
+
+
+def test_inconclusive_legitimate_case_remains_in_success_denominator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluator = ComparativeEvaluator()
+    cases = [case for case in get_m9_dataset() if case.is_legitimate][:2]
+    observed = ComparativeRunResult(
+        case_id=cases[0].case_id,
+        category=cases[0].category,
+        name=cases[0].name,
+        is_legitimate=True,
+        severity=cases[0].severity,
+        evaluation_status="evaluated",
+        guarded_boundary_contained=True,
+        guarded_decision="REQUIRE_APPROVAL",
+    )
+    incomplete = ComparativeRunResult(
+        case_id=cases[1].case_id,
+        category=cases[1].category,
+        name=cases[1].name,
+        is_legitimate=True,
+        severity=cases[1].severity,
+        evaluation_status="inconclusive",
+    )
+    results = {observed.case_id: observed, incomplete.case_id: incomplete}
+    monkeypatch.setattr(evaluator, "evaluate_case", lambda case: results[case.case_id])
+
+    scorecard = evaluator.run_suite(cases)
+
+    assert scorecard.legitimate_cases_count == 2
+    assert scorecard.evaluated_legitimate_cases_count == 1
+    assert scorecard.inconclusive_legitimate_cases_count == 1
+    assert scorecard.legitimate_task_success_count == 1
+    assert scorecard.legitimate_task_success_rate == 0.5
+    assert scorecard.false_denial_count == 0
+
+
+def test_duplicate_case_ids_fail_instead_of_overwriting_scorecard_identity() -> None:
+    case = get_m9_dataset()[0]
+
+    with pytest.raises(ValueError, match="case IDs must be unique"):
+        ComparativeEvaluator().run_suite([case, case])
 
 
 def test_evaluation_exception_is_not_converted_to_a_block(monkeypatch: pytest.MonkeyPatch) -> None:

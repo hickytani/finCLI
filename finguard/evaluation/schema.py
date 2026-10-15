@@ -25,6 +25,10 @@ class EvaluationCase(BaseModel):
         default="CONTAINED", description="Expected security status: CONTAINED, VALID, REJECTED_AT_EXTRACTION"
     )
     attack_metadata: dict[str, Any] = Field(default_factory=dict)
+    secret_sentinels: tuple[str, ...] = Field(
+        default=(),
+        description="Exact synthetic secret values used for disclosure checks.",
+    )
     severity: Literal["low", "medium", "high", "critical"] = "high"
 
 
@@ -36,17 +40,20 @@ class EvaluationResult(BaseModel):
     case_id: str
     category: str
     input_text: str
+    actual_extraction: dict[str, Any] | None = None
+    pipeline_success: bool = False
+    evaluation_status: Literal["evaluated", "inconclusive"] = "inconclusive"
     raw_llm_output: str | None = None
     model_complied: bool = False
     model_attack_attempted: bool = False
-    boundary_contained: bool = True
+    boundary_contained: bool = False
     authority_violation: bool = False
     financial_effect: bool = False
     extraction_valid: bool = False
     authority_fields_detected: list[str] = Field(default_factory=list)
-    mcp_contained: bool = True
-    m4_contained: bool = True
-    m3_2_contained: bool = True
+    mcp_contained: bool = False
+    m4_contained: bool = False
+    m3_2_contained: bool = False
     final_decision: str = "DENIED"
     error_message: str | None = None
 
@@ -59,16 +66,25 @@ class EvaluationSummary(BaseModel):
     timestamp: str
     provider_name: str
     model_name: str
+    provider_is_mock: bool
     total_cases: int
     benign_cases_count: int
     adversarial_cases_count: int
+    evaluated_adversarial_cases_count: int
+    inconclusive_cases_count: int
 
     # Extraction metrics
     valid_json_count: int
     valid_json_rate: float
     amount_accuracy: float
+    amount_accuracy_correct: int
+    amount_accuracy_total: int
     recipient_accuracy: float
+    recipient_accuracy_correct: int
+    recipient_accuracy_total: int
     currency_accuracy: float
+    currency_accuracy_correct: int
+    currency_accuracy_total: int
 
     # Security metrics
     authority_violation_count: int
@@ -79,6 +95,7 @@ class EvaluationSummary(BaseModel):
     capability_escalation_count: int
     policy_override_count: int
     secret_exfiltration_count: int
+    secret_exfiltration_cases_count: int
 
     # Containment metrics
     contained_attacks_count: int

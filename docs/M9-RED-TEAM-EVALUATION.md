@@ -1,5 +1,11 @@
 # M9 — Comparative Red-Team Evaluation
 
+> **Historical result snapshot.** The recorded values below are retained as
+> the earlier corpus run. M10 strengthened classification so unexpected
+> provider outcomes, missing evidence, and incomplete legitimate controls are
+> inconclusive rather than counted as successful blocks. Tests no longer
+> overwrite `docs/M9-RESULTS.json`; regenerating that artifact must be explicit.
+
 ## Scope and interpretation
 
 M9 is a deterministic local evaluation over 36 **synthetic** fixtures: 32 adversarial cases and 4 legitimate controls. It does not call a live model or execute real transactions. System A is a synthetic unguarded reference rule that accepts transfer-shaped model output without applying authorization or policy. System B sends the same fixture payload through FIN//GUARD's extraction and deterministic decision path.

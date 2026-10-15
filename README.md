@@ -1,8 +1,7 @@
 # FIN//GUARD — Security Architecture for Agentic Financial Systems
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue.svg)](https://www.python.org/)
-[![Build Status](https://img.shields.io/badge/tests-649%20passed-brightgreen.svg)]()
-[![Security Audit](https://img.shields.io/badge/authority--violations-0-success.svg)]()
+[![Build Status](https://github.com/hickytani/finCLI/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hickytani/finCLI/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Core Research Thesis**: Can an autonomous financial agent safely operate when its reasoning component is treated as an **UNTRUSTED principal**?
@@ -119,7 +118,7 @@ The autonomous agent is strictly isolated from core financial authority. **The a
 git clone https://github.com/hickytani/finCLI.git
 cd finCLI
 
-# Run full test suite (577 tests)
+# Run the test suite
 py -m pytest
 ```
 
@@ -159,9 +158,16 @@ py -m finguard.cli.main agent run --request "Pay Alice INR 500 for design work"
 
 ---
 
-## 5. Security Scorecard & M7.1 Red-Team Results
+## 5. Historical M7.1 Red-Team Snapshot
 
-FIN//GUARD M7.1 evaluates the autonomous agent against **51 red-team scenarios** (41 adversarial across 15+ attack classes + 10 benign regression cases) using trusted system state snapshots (`SystemStateSnapshot`):
+> **Historical result, not a current security assurance claim.** These figures
+> are retained from an earlier M7.1 run of author-written scenarios. They are
+> not live-model performance, real-world attack probabilities, or an
+> independent security assessment. The FG-401 extraction-accuracy and
+> containment calculations were later found defective and are superseded by
+> the [M10 evaluation validation](docs/M10-EVALUATION-VALIDATION.md).
+
+The historical run evaluated **51 red-team scenarios** (41 adversarial and 10 benign regression cases) using local system-state snapshots:
 
 | Metric | Measured Value | 95% Wilson Confidence Interval / Statistical Upper Bound |
 |---|---|---|

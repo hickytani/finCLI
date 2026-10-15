@@ -20,8 +20,8 @@ help:
 	@echo "  make t1           - Pre-commit gate: lint + unit + regression"
 	@echo "  make t2           - Pre-PR gate: lint + full suite + branch coverage >= 71%"
 	@echo "  make t3           - Nightly gate: full suite + Hypothesis ci profile"
-	@echo "  make attack       - Red-team attack catalog"
-	@echo "  make attack-loop  - Continuous randomized attack loop"
+	@echo "  make attack       - Fixed security and regression test suites"
+	@echo "  make attack-loop  - Repeat fixed security and regression tests until failure"
 	@echo "  make bench        - Performance baseline"
 	@echo "  make migrate-dry  - Dry-run legacy money migration"
 	@echo "  make migrate-money DATABASE=... BACKUP=... - Apply migration after backup"
@@ -48,10 +48,10 @@ t3:
 	$(PYTEST) -v --cov=finguard --cov-branch --hypothesis-profile=ci tests/
 
 attack:
-	$(PYTEST) -v tests/security/ tests/regression/
+	$(PYTEST) -q tests/security/ tests/regression/
 
 attack-loop:
-	$(PYTHON) -c "import time, subprocess, sys; [subprocess.run([sys.executable, '-m', 'pytest', '-q', 'tests/regression/']) or time.sleep(2) for _ in iter(int, 1)]"
+	$(PYTHON) scripts/attack_loop.py
 
 bench:
 	$(PYTHON) scripts/bench.py
