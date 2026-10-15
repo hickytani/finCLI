@@ -110,7 +110,11 @@ class DeterministicPlanner:
             PlanStep(2, "Check that the requested capability remains within the trusted policy", tool_name=None),
             PlanStep(3, "Submit the proposed action through the existing financial boundary", tool_name="submit_intent", requires_approval=False),
         )
-        caps = tuple(allowed_capabilities or ("transaction.propose",))
+        caps = (
+            tuple(allowed_capabilities)
+            if allowed_capabilities is not None
+            else ("transaction.propose",)
+        )
         return OrchestrationPlan(
             task=task.strip(),
             steps=steps,
@@ -130,6 +134,7 @@ class BoundedOrchestrator:
         OrchestrationState.REQUESTED: {OrchestrationState.PLANNING},
         OrchestrationState.PLANNING: {
             OrchestrationState.TOOL_CALL,
+            OrchestrationState.GUARDRAIL_CHECK,
             OrchestrationState.REPLAN,
             OrchestrationState.APPROVAL_REQUIRED,
             OrchestrationState.REJECTED,
@@ -143,6 +148,7 @@ class BoundedOrchestrator:
             OrchestrationState.CANCELLED,
         },
         OrchestrationState.OBSERVATION: {
+            OrchestrationState.TOOL_CALL,
             OrchestrationState.GUARDRAIL_CHECK,
             OrchestrationState.REPLAN,
             OrchestrationState.REJECTED,
@@ -164,7 +170,6 @@ class BoundedOrchestrator:
             OrchestrationState.CANCELLED,
         },
         OrchestrationState.APPROVAL_REQUIRED: {
-            OrchestrationState.EXECUTION_BOUNDARY,
             OrchestrationState.REJECTED,
             OrchestrationState.FAILED,
             OrchestrationState.CANCELLED,
@@ -201,8 +206,16 @@ class BoundedOrchestrator:
         self.max_steps = int(max_steps)
         self.max_tool_calls = int(max_tool_calls)
         self.deadline_seconds = int(deadline_seconds)
-        self.allowed_capabilities = tuple(allowed_capabilities or ("transaction.propose",))
-        self.allowed_tools = tuple(allowed_tools or ("read_context", "submit_intent"))
+        self.allowed_capabilities = (
+            tuple(allowed_capabilities)
+            if allowed_capabilities is not None
+            else ("transaction.propose",)
+        )
+        self.allowed_tools = (
+            tuple(allowed_tools)
+            if allowed_tools is not None
+            else ("read_context", "submit_intent")
+        )
         self.planner = planner or DeterministicPlanner()
         self.financial_limit = financial_limit
 
@@ -219,10 +232,20 @@ class BoundedOrchestrator:
     ) -> OrchestrationRun:
         if not task or not task.strip():
             raise ValidationError("Task cannot be empty")
+        if capabilities is not None:
+            effective_capabilities = tuple(capabilities)
+            disallowed = set(effective_capabilities) - set(self.allowed_capabilities)
+            if disallowed:
+                raise SecurityError(
+                    f"Requested capabilities {sorted(disallowed)} exceed configured allowed_capabilities {sorted(self.allowed_capabilities)}"
+                )
+        else:
+            effective_capabilities = self.allowed_capabilities
+
         run = OrchestrationRun(
             run_id=f"RUN-{uuid.uuid4().hex[:12].upper()}",
             task=task.strip(),
-            allowed_capabilities=tuple(capabilities or self.allowed_capabilities),
+            allowed_capabilities=effective_capabilities,
             allowed_tools=self.allowed_tools,
             max_steps=self.max_steps,
             max_tool_calls=self.max_tool_calls,
@@ -248,7 +271,6 @@ class BoundedOrchestrator:
         if not plan.steps:
             raise ValidationError("Plan must contain at least one step")
         run.plan = plan
-        run.state = OrchestrationState.PLANNING
         run.steps_used += 1
         return self._transition(run, OrchestrationState.PLANNING)
 
@@ -269,7 +291,7 @@ class BoundedOrchestrator:
         if capability and capability not in run.allowed_capabilities:
             return self.reject(run, f"Capability '{capability}' is not permitted for this run")
 
-        run.state = OrchestrationState.TOOL_CALL
+        run = self._transition(run, OrchestrationState.TOOL_CALL)
         run.tool_calls_used += 1
         run.steps_used += 1
         run.tool_history.append(tool_name)
@@ -284,8 +306,7 @@ class BoundedOrchestrator:
         else:
             result = {"status": "ok", "tool": tool_name, "arguments": arguments or {}}
         run.observations.append({"stage": OrchestrationState.OBSERVATION.value, "tool": tool_name, "result": result})
-        run.state = OrchestrationState.OBSERVATION
-        return run
+        return self._transition(run, OrchestrationState.OBSERVATION)
 
     def replan(
         self,
@@ -310,7 +331,7 @@ class BoundedOrchestrator:
         if reason:
             run.last_reason = reason
         run.steps_used += 1
-        run.state = OrchestrationState.REPLAN
+        run = self._transition(run, OrchestrationState.REPLAN)
         return self._transition(run, OrchestrationState.PLANNING)
 
     def guardrail_check(
@@ -328,9 +349,7 @@ class BoundedOrchestrator:
             return self.reject(run, f"Capability '{capability}' is not allowed in this run")
         if action in {"approve_transaction", "sign_transaction", "execute_transaction"}:
             return self.reject(run, "Privileged financial actions are not available to the orchestrator")
-        if financial_amount is not None and run.financial_limit is not None and financial_amount > run.financial_limit:
-            return self.require_approval(run, "Financial amount exceeds the configured run budget")
-        run.state = OrchestrationState.GUARDRAIL_CHECK
+        run = self._transition(run, OrchestrationState.GUARDRAIL_CHECK)
         run.observations.append({
             "stage": OrchestrationState.GUARDRAIL_CHECK.value,
             "capability": capability,
@@ -338,6 +357,8 @@ class BoundedOrchestrator:
             "action": action,
             "financial_amount": financial_amount,
         })
+        if financial_amount is not None and run.financial_limit is not None and financial_amount > run.financial_limit:
+            return self.require_approval(run, "Financial amount exceeds the configured run budget")
         return self._transition(run, OrchestrationState.EXECUTION_BOUNDARY)
 
     def require_approval(
@@ -346,35 +367,41 @@ class BoundedOrchestrator:
         reason: str,
     ) -> OrchestrationRun:
         self._ensure_not_terminal(run)
+        run = self._transition(run, OrchestrationState.APPROVAL_REQUIRED)
         run.last_reason = reason
         run.decision = "APPROVAL_REQUIRED"
-        run.state = OrchestrationState.APPROVAL_REQUIRED
         return run
 
     def complete(self, run: OrchestrationRun, *, decision: str = "COMPLETED") -> OrchestrationRun:
         self._ensure_not_terminal(run)
         self._check_budget(run, "completion")
+        if run.state != OrchestrationState.EXECUTION_BOUNDARY:
+            raise InvalidTransitionError(
+                f"Cannot complete run in state {run.state.value}; "
+                f"run must reach {OrchestrationState.EXECUTION_BOUNDARY.value} first."
+            )
+        if run.decision == "APPROVAL_REQUIRED":
+            raise InvalidTransitionError(
+                "Cannot complete run requiring approval without verified approval evidence"
+            )
+        run = self._transition(run, OrchestrationState.COMPLETED)
         run.decision = decision
-        run.state = OrchestrationState.EXECUTION_BOUNDARY
-        return self._transition(run, OrchestrationState.COMPLETED)
+        return run
 
     def reject(self, run: OrchestrationRun, reason: str) -> OrchestrationRun:
         run.last_reason = reason
         run.decision = "REJECTED"
-        run.state = OrchestrationState.REJECTED
-        return run
+        return self._transition(run, OrchestrationState.REJECTED)
 
     def fail(self, run: OrchestrationRun, reason: str) -> OrchestrationRun:
         run.last_reason = reason
         run.decision = "FAILED"
-        run.state = OrchestrationState.FAILED
-        return run
+        return self._transition(run, OrchestrationState.FAILED)
 
     def cancel(self, run: OrchestrationRun, reason: str) -> OrchestrationRun:
         run.last_reason = reason
         run.decision = "CANCELLED"
-        run.state = OrchestrationState.CANCELLED
-        return run
+        return self._transition(run, OrchestrationState.CANCELLED)
 
     def _transition(self, run: OrchestrationRun, target: OrchestrationState) -> OrchestrationRun:
         current = run.state
