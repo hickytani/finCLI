@@ -178,6 +178,16 @@ class DecisionEngine:
                     f"Confusable or zero-width characters in to_account: {dest_res.reason}"
                 )
 
+            # Tenant and account boundary validation (M11-B)
+            # Enforces tenant/account ownership on the authoritative decision path.
+            valid_boundary, boundary_reason = self.account_registry.validate_tenant_boundary(
+                actor.tenant_id,
+                transaction.from_account,
+                transaction.to_account,
+            )
+            if not valid_boundary:
+                raise ValueError(boundary_reason)
+
             policy_hash = sha256_hash(
                 canonical_serialize(self.policy_engine.policy.model_dump(mode="json"))
             )

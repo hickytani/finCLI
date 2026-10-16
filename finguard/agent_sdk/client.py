@@ -19,8 +19,16 @@ if TYPE_CHECKING:
 
 
 class FinGuardAgentClient:
-    def __init__(self, actor_id: str = "treasury-agent", session_id: str | None = None):
+    def __init__(
+        self,
+        actor_id: str = "treasury-agent",
+        session_id: str | None = None,
+        account_registry: Any | None = None,
+        registry: Any | None = None,
+    ):
         self.actor_id, self.session_id = actor_id, session_id or "agent-sdk"
+        self.account_registry = account_registry
+        self.registry = registry
 
     def create_transaction(
         self,
@@ -62,6 +70,8 @@ class FinGuardAgentClient:
             return StructuredIntentBoundary(
                 actor_id=self.actor_id,
                 session_id=self.session_id,
+                account_registry=self.account_registry,
+                registry=self.registry,
             ).submit(intent, ai_assessment=ai_assessment)
         except Exception as exc:
             from finguard.agent.intent import IntentValidationError

@@ -30,6 +30,7 @@ class ActorConfig(BaseModel):
     actor_id: str
     actor_type: ActorType
     display_name: str
+    tenant_id: str | None = Field(default="tenant_default")
     authority_currency: Currency = Currency.INR
     authority_limit: str = "10000.00"
     allowed_destinations: list[str] = Field(default_factory=list)
@@ -91,6 +92,7 @@ class IdentityRegistry:
                     "actor_id": "operator-1",
                     "actor_type": ActorType.HUMAN_OPERATOR.value,
                     "display_name": "Primary Operator",
+                    "tenant_id": "tenant_admin",
                     "authority_limit": "1000000.00",
                     "allowed_destinations": ["vendor-a", "vendor-b", "treasury-out", "payroll"],
                     "allowed_source_accounts": ["*"],
@@ -101,6 +103,7 @@ class IdentityRegistry:
                     "actor_id": "treasury-agent",
                     "actor_type": ActorType.AGENT.value,
                     "display_name": "Autonomous Treasury Agent",
+                    "tenant_id": "tenant_default",
                     "authority_limit": "10000.00",
                     "allowed_destinations": ["vendor-a", "vendor-b"],
                     "allowed_source_accounts": ["treasury", "acct_treasury"],
@@ -112,6 +115,7 @@ class IdentityRegistry:
                     "actor_id": "approver-1",
                     "actor_type": ActorType.APPROVER.value,
                     "display_name": "Senior Approver",
+                    "tenant_id": "tenant_admin",
                     "authority_limit": "500000.00",
                     "allowed_destinations": ["*"],
                     "allowed_source_accounts": ["*"],
@@ -170,10 +174,23 @@ class IdentityRegistry:
                 # an explicit wildcard so they continue to function as a migration artifact.
                 legacy_source_accounts = ["*"] if item.get("allowed_destinations") else []
 
+            raw_tenant = item.get("tenant_id")
+            if raw_tenant is None:
+                default_tenant = (
+                    "tenant_admin"
+                    if item.get("actor_type")
+                    in (ActorType.HUMAN_OPERATOR.value, ActorType.APPROVER.value)
+                    else "tenant_default"
+                )
+                actor_tenant = default_tenant
+            else:
+                actor_tenant = raw_tenant
+
             actor = ActorConfig(
                 actor_id=item["actor_id"],
                 actor_type=ActorType(item["actor_type"]),
                 display_name=item["display_name"],
+                tenant_id=actor_tenant,
                 authority_currency=Currency(item.get("authority_currency", Currency.INR.value)),
                 authority_limit=str(item.get("authority_limit", "10000.00")),
                 allowed_destinations=item.get("allowed_destinations", []),

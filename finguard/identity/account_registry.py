@@ -123,6 +123,13 @@ class AccountRegistry:
                 currency=Currency.INR,
                 aliases=["payroll", "acct_payroll"],
             ),
+            AccountConfig(
+                account_id="acct_treasury_out",
+                tenant_id="tenant_default",
+                display_name="Corporate Treasury Outbound",
+                currency=Currency.INR,
+                aliases=["treasury-out", "treasury_out", "acct_treasury_out"],
+            ),
         ]
         for acc in defaults:
             self.register_account(acc)
@@ -220,19 +227,36 @@ class AccountRegistry:
 
     def validate_tenant_boundary(
         self,
-        actor_tenant_id: str,
+        actor_tenant_id: str | None,
         from_account_id: str,
         to_account_id: str,
     ) -> tuple[bool, str]:
-        """Verify that from_account belongs to actor's tenant."""
+        """Verify that from_account belongs to actor's tenant, and to_account satisfies tenant boundary."""
+        if not actor_tenant_id or not str(actor_tenant_id).strip():
+            return False, "Missing or empty actor tenant identity"
+
         from_res = self.resolve_account(from_account_id)
         if from_res.status != ResolutionStatus.RESOLVED or not from_res.account:
-            return False, f"Source account resolution failed: {from_res.reason}"
-
-        if from_res.account.tenant_id != actor_tenant_id and actor_tenant_id != "tenant_admin":
+            if actor_tenant_id != "tenant_admin":
+                return False, f"Source account resolution failed: {from_res.reason}"
+        elif from_res.account.tenant_id != actor_tenant_id and actor_tenant_id != "tenant_admin":
             return False, (
                 f"Tenant boundary violation: actor tenant '{actor_tenant_id}' "
                 f"cannot initiate from account '{from_account_id}' owned by '{from_res.account.tenant_id}'"
+            )
+
+        to_res = self.resolve_account(to_account_id)
+        if to_res.status != ResolutionStatus.RESOLVED or not to_res.account:
+            return False, f"Destination account resolution failed: {to_res.reason}"
+
+        if (
+            to_res.account.tenant_id != actor_tenant_id
+            and to_res.account.tenant_id != "tenant_default"
+            and actor_tenant_id != "tenant_admin"
+        ):
+            return False, (
+                f"Tenant boundary violation: destination account '{to_account_id}' "
+                f"belongs to tenant '{to_res.account.tenant_id}', not actor tenant '{actor_tenant_id}'"
             )
 
         return True, "Tenant boundary check passed"

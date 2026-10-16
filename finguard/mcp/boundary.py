@@ -117,6 +117,8 @@ _AUTHORITY_FIELDS: frozenset[str] = frozenset(
         "signing_key",
         "approve",
         "sign",
+        "tenant",
+        "tenant_id",
     }
 )
 
@@ -186,11 +188,15 @@ class MCPSecurityBoundary:
         actor_id: str,
         session: MCPSession,
         orchestrator_config: dict[str, Any] | None = None,
+        account_registry: Any | None = None,
+        registry: Any | None = None,
     ) -> None:
         if not actor_id or not actor_id.strip():
             raise SecurityError("MCP actor_id must not be blank")
         self._actor_id = actor_id.strip()
         self._session = session
+        self._account_registry = account_registry
+        self._registry = registry
         # Orchestrator limits are set by server configuration — MCP caller cannot override
         cfg = orchestrator_config or {}
         self._orchestrator = BoundedOrchestrator(
@@ -277,6 +283,8 @@ class MCPSecurityBoundary:
             boundary = StructuredIntentBoundary(
                 actor_id=self._actor_id,
                 session_id=self._session.session_id,
+                account_registry=self._account_registry,
+                registry=self._registry,
             )
             decision_result = boundary.submit(intent_dict)
         except IntentValidationError as exc:

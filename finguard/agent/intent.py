@@ -18,6 +18,7 @@ from finguard.core.enums import ActorType, AgentRequestOutcome, AgentResource, C
 from finguard.core.errors import SecurityError
 from finguard.core.transaction import Transaction
 from finguard.decision import DecisionEngine, DecisionResult
+from finguard.identity.account_registry import AccountRegistry
 from finguard.identity.registry import IdentityRegistry
 from finguard.money import Money
 from finguard.storage.database import get_session
@@ -54,6 +55,8 @@ _AUTHORITY_CONTEXT_KEYS = {
     "signature",
     "signer",
     "state",
+    "tenant",
+    "tenantid",
     "transactionid",
 }
 
@@ -162,9 +165,11 @@ class StructuredIntentBoundary:
         actor_id: str,
         session_id: str,
         registry: IdentityRegistry | None = None,
+        account_registry: AccountRegistry | None = None,
         clock: Callable[[], datetime.datetime] | None = None,
     ):
         self._registry = registry or IdentityRegistry()
+        self._account_registry = account_registry or AccountRegistry()
         actor = self._registry.get_actor(actor_id)
         if actor is None or actor.actor_type != ActorType.AGENT or not actor.active:
             raise SecurityError("Structured intent boundary requires an active registered AGENT")
@@ -266,7 +271,10 @@ class StructuredIntentBoundary:
             raise error
 
         try:
-            decision = DecisionEngine(registry=self._registry).decide(
+            decision = DecisionEngine(
+                registry=self._registry,
+                account_registry=self._account_registry,
+            ).decide(
                 transaction,
                 ai_assessment=ai_assessment,
             )
@@ -286,7 +294,10 @@ class StructuredIntentBoundary:
                     str(intent.intent_id),
                 )
                 raise
-            decision = DecisionEngine(registry=self._registry).decide(
+            decision = DecisionEngine(
+                registry=self._registry,
+                account_registry=self._account_registry,
+            ).decide(
                 replay_transaction,
                 ai_assessment=ai_assessment,
             )
@@ -412,6 +423,9 @@ class StructuredIntentBoundary:
         elif "recipient" in codes:
             reason = "recipient is invalid or ambiguous"
             code = "INVALID_RECIPIENT"
+        elif "context" in codes:
+            reason = "context contains authority-like or forbidden fields"
+            code = "SCHEMA_VALIDATION_FAILED"
         else:
             reason = "intent fields are missing or invalid"
             code = "SCHEMA_VALIDATION_FAILED"
